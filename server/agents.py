@@ -701,17 +701,20 @@ class IntegratorAgent:
         ## TASK
         Conceive the complete data link and functional architecture, and ultimately synthesize a cohesive flowchart/architecture diagram.
         ### Steps and Rules 
-        1. **Define Modules**: Sort out user requirements and retrieved information and define the necessary modules in the entire architecture.
-            - **Naming Rule**: Use **Generic Functional Names** (e.g., "Gaze Tracker", "Dialogue Manager") for the modules. **DO NOT** use specific paper titles, citation indices, or long implementation names (e.g. NOT "Gaze360: Physically Unconstrained...").
+        1. **Define the main storyline**: Define a clear functional mainline based on the user's requirements and the provided perspective, and synthesize a detailed overall_description of the main storyline.
+        2. **Define Modules**: Define all the necessary modules for this achitecture. 
+        First, consider all the modules that are necessary for the mainline, including the base anchors. 
+        Then, in addition to the main line, add supporting functional nodes. These nodes can be connected to the main line and derived from it, but they MUST NOT be completely independent of the main line.
+            - **Naming Rule**: Use more specific and contextually relevant node names to enable users to easily identify their functions. Avoid directly copying the wording from the paper, using generic technical labels (such as parser, engine) or long implementation names (e.g. NOT "Gaze360: Physically Unconstrained...").
             - Ensure the added nodes from the divergent plans are integrated meaningfully.
             - **Provide highly detailed descriptions for both `function` and `technical_methods` from the retrieved information BUT DO NOT FABRICATE.** You must explicitly articulate the module's specific role, core responsibilities, and crucial importance within the overall system. Explain exactly HOW the technical methods work, process data, and why they were chosen, avoiding brief or vague summaries.
             - If there are subnodes within the modules (based on the retrieved information and relevant to the current context), they should also be defined. Explicitly map out the intermediate processes and data flow within the module using subnodes so its internal logic is transparent.
-        2. **Connect the Flow**: Use the topology info to decide logical connections. 
+        3. **Connect the Flow**: Use the topology info to decide logical connections. 
             - Ensure new conceptual modules have comprehensive connections with the base logic to fully realize their functional value. DO NOT let them become dead ends unless explicitly defined as output endpoints.
             - All the connections should be implemented from the modules defined above. Do not include any other nodes, especially when defining the source_mod and the target_mod in ports.
             - **Graph Cleaning**: Merge parallel edges between the same two nodes. Do not create 'shadow' nodes that duplicate existing functions. Ensure the graph is a single connected component if possible.
             - If Module A usually follows Module B in Paper X, try to preserve that flow if it fits.
-        3. **Check the architecture**:
+        4. **Check the architecture**:
             - REMOVE redundant nodes and connections (perform the same function even with different names).
             - REMOVE or RECHECK any nodes that are isolated or unused.
         
@@ -766,7 +769,7 @@ class IntegratorAgent:
             response = self.client.chat.completions.create(
                 model="gpt-4o-2024-11-20",
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.9,
+                temperature=0.8,
                 response_format={"type": "json_object"},
             ).choices[0].message.content
         except Exception as e:
@@ -902,6 +905,72 @@ class EditorAgent:
         self.client = client
         self.model = "gpt-4o-2024-11-20"
 
+    def _extract_module_names(self, current_plan):
+        names = []
+        if not isinstance(current_plan, dict):
+            return names
+        module_details = current_plan.get("module_details", {})
+        if isinstance(module_details, dict):
+            for key, value in module_details.items():
+                if key:
+                    names.append(str(key))
+                if isinstance(value, dict):
+                    if value.get("name"):
+                        names.append(str(value["name"]))
+                    if value.get("id"):
+                        names.append(str(value["id"]))
+        elif isinstance(module_details, list):
+            for item in module_details:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("name"):
+                    names.append(str(item["name"]))
+                if item.get("id"):
+                    names.append(str(item["id"]))
+        cleaned = []
+        seen = set()
+        for name in names:
+            n = name.strip()
+            if n and n not in seen:
+                cleaned.append(n)
+                seen.add(n)
+        return cleaned
+
+    def _build_targeted_edit_directive(self, current_plan, user_instruction):
+        module_names = self._extract_module_names(current_plan)
+        if not module_names:
+            return ""
+        instruction = str(user_instruction or "")
+        instruction_lower = instruction.lower()
+        mentioned = []
+        for name in module_names:
+            if name.lower() in instruction_lower:
+                mentioned.append(name)
+        mentioned_unique = []
+        seen = set()
+        for name in mentioned:
+            k = name.lower()
+            if k not in seen:
+                mentioned_unique.append(name)
+                seen.add(k)
+        focus_keywords = [
+            "单个", "单一", "局部", "节点", "模块", "细化", "细致", "详细", "深入", "精准", "仅修改", "只修改", "只改",
+            "function", "technical", "sub node", "sub-node","subnode", "子节点", "子模块", "功能", "技术方法"
+        ]
+        has_focus_signal = any(keyword in instruction_lower for keyword in focus_keywords)
+        if len(mentioned_unique) != 1 or not has_focus_signal:
+            return ""
+        target = mentioned_unique[0]
+        return f"""
+        ## Targeted Node Edit Mode
+        The user instruction points to a single module: "{target}".
+        You must apply a precise local edit:
+        1. Modify only this target module, or its `sub_nodes`, or edges directly needed for this target.
+        2. Prefer edits on `function`, `technical_methods`, and child sub-node additions when requested.
+        3. Keep other modules unchanged unless a minimal consistency fix is strictly required.
+        4. In `modification_intent`, explicitly mention this is a single-node targeted refinement.
+        """
+
     def edit_plan(self, current_plan, user_instruction, history_summary, retriever):
         """
         Analyzes the user's instruction, retrieves necessary information, and revises the architecture.
@@ -946,6 +1015,7 @@ class EditorAgent:
                 current_plan = json.loads(current_plan)
             except:
                 pass
+        targeted_edit_directive = self._build_targeted_edit_directive(current_plan, user_instruction)
 
         system_prompt = f"""
         You are an expert System Architect. You are collaborating with a user to modify a system architecture design.
@@ -966,18 +1036,24 @@ class EditorAgent:
         The user has provided an instruction. You must:
         1. Analyze the instruction in context of the history (avoid repeating undone changes, or building on top of recent changes).
         2. If you need external knowledge (e.g., technical specs, similar modules), call `retrieve_knowledge`.
-        3. Propose a modification plan (in your thought process).
-        4. Output the FINAL JSON with the modifications.
+        3. Decide the response mode:
+           - plan_update: update the architecture JSON
+           - direct_answer: answer the user without changing the plan
+           - evidence_answer: answer with evidence and citations without changing the plan
+           - plan_explain: explain the current plan without changing it
+        4. Output a FINAL JSON response matching the required format below.
         
         ## Modification Rules
         1. **Locality**: Only change what is requested.
         2. **Preservation**: Keep existing modules unless asked to remove them.
         3. **Consistency**: Ensure the graph remains connected and logical.
         4. **Integrity**: Ensure all `source_mod` and `target_mod` in ports refer to valid keys in `module_details`.
+        {targeted_edit_directive}
         
         ## Final Output Format
-        You must output a JSON object with the following structure, with the format of revised_plan exactly same as the original plan structure:
+        If you choose plan_update, output:
         {{
+            "output_type": "plan_update",
             "modification_intent": "A concise summary of what you changed (e.g., 'Added Authentication Module and connected it to User Interface')",
             "revised_plan": {{
                 "overall_description": "The overall description of the ENTIRE revised system architecture. Update the original description to reflect your changes, but DO NOT just write your modification intent here.",
@@ -1003,10 +1079,26 @@ class EditorAgent:
                 ]
             }}
         }}
+
+        If you choose direct_answer, evidence_answer, or plan_explain, output:
+        {{
+            "output_type": "direct_answer | evidence_answer | plan_explain",
+            "answer": {{
+                "text": "Your response to the user.",
+                "citations": [
+                    {{
+                        "title": "Source title or module name",
+                        "snippet": "Short evidence snippet",
+                        "source": "Origin if available"
+                    }}
+                ]
+            }}
+        }}
         
         **CRITICAL REQUIREMENT:** 
         1. `overall_description` MUST describe the full, comprehensive system workflow after your changes.
         2. `module_details` MUST be a LIST containing the FULL, COMPLETE architecture with ALL nodes (both modified and unmodified) as objects. Do NOT only output the changed nodes. Failure to output unmodified nodes will break the system.
+        3. For non-plan_update modes, do NOT output revised_plan and do NOT alter the plan.
         """
 
         messages = [{"role": "system", "content": system_prompt}]
@@ -1052,8 +1144,12 @@ class EditorAgent:
                             for term, nodes in retrieved_map.items():
                                 for n in nodes:
                                     found_any = True
-                                    context_text += f"- Module: {n.node.metadata.get('name', 'Unknown')}\n"
-                                    context_text += f"  Info: {n.node.text[:500]}...\n"
+                                    title = n.node.metadata.get("name", "Unknown")
+                                    source = n.node.metadata.get("source", "")
+                                    snippet = n.node.text[:500]
+                                    context_text += f"- Title: {title}\n"
+                                    context_text += f"  Snippet: {snippet}...\n"
+                                    context_text += f"  Source: {source}\n"
                             
                             if not found_any:
                                 context_text += "No relevant modules found."
