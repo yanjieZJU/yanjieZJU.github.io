@@ -1,10 +1,7 @@
 // client/src/App.jsx
-import React, { useState, useRef, useCallback } from 'react';
-import MermaidDiagram from './MermaidDiagram';
-import ResultFlowViewer from './ResultFlowViewer';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import X6FlowViewer from './X6FlowViewer';
 import './App.css';
-import axios from 'axios';
-import { toPng } from 'html-to-image';
 import ReactFlow, {
   addEdge,
   Background,
@@ -28,7 +25,6 @@ function App() {
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
   const [newNodeName, setNewNodeName] = useState('');
-  const [mermaidCode, setMermaidCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState('开始生成...'); // 进度条状态
@@ -36,15 +32,52 @@ function App() {
   // 多方案状态
   const [plans, setPlans] = useState([]); // 存储所有返回的方案
   const [activePlanIndex, setActivePlanIndex] = useState(0); // 当前激活的方案索引
+  const plansRef = useRef(plans);
+  const nodeDetailsSigRef = useRef('');
 
   const [nodeDetails, setNodeDetails] = useState({}); // 存储后端返回的节点详细信息
+  const resolvedNodeDetails = useMemo(() => {
+    if (Array.isArray(nodeDetails)) return nodeDetails;
+    if (nodeDetails && Object.keys(nodeDetails).length > 0) return nodeDetails;
+    const currentPlan = plans[activePlanIndex];
+    const fromPlan = currentPlan?.node_details ?? currentPlan?.module_details;
+    return fromPlan ?? nodeDetails;
+  }, [nodeDetails, plans, activePlanIndex]);
+  const detailsRef = useRef(resolvedNodeDetails);
+  useEffect(() => {
+    detailsRef.current = resolvedNodeDetails;
+  }, [resolvedNodeDetails]);
+  
+  useEffect(() => {
+    plansRef.current = plans;
+  }, [plans]);
+
+  useEffect(() => {
+    const currentPlan = plansRef.current[activePlanIndex];
+    if (currentPlan) {
+      const detailsFromPlan = currentPlan.node_details ?? currentPlan.module_details;
+      console.log('Syncing plan to UI:', activePlanIndex, currentPlan, 'detailsFromPlan:', detailsFromPlan ? 'present' : 'absent');
+      if (typeof detailsFromPlan !== 'undefined') {
+        let sig = '';
+        try {
+          sig = JSON.stringify(detailsFromPlan);
+        } catch (e) { void e; }
+        if (!sig || sig !== nodeDetailsSigRef.current) {
+          nodeDetailsSigRef.current = sig;
+          setNodeDetails(detailsFromPlan);
+        }
+      }
+      setSelectedNodeInfo(null);
+    }
+  }, [activePlanIndex]);
 
   // React Flow 实例
-  const [reactFlowInstance, setReactFlowInstance] = useState(null);
   const reactFlowWrapper = useRef(null);
   const resultFlowRef = useRef(null); // Ref for the right panel viewer
 
   const [selectedNodeInfo, setSelectedNodeInfo] = useState(null); // 当前选中节点的信息
+  const [nodeDetailDraft, setNodeDetailDraft] = useState({ function: '', technical_methods: '' });
+  const [isNodeDetailEditing, setIsNodeDetailEditing] = useState(false);
 
   // 新增节点详情弹窗状态
   const [isNodeModalOpen, setIsNodeModalOpen] = useState(false);
@@ -253,8 +286,6 @@ function App() {
       // 检查当前节点是否有父节点
       if (node.parentNode) {
         // 获取父节点对象（为了坐标转换）
-        const parent = nodes.find(p => p.id === node.parentNode);
-
         // 关键逻辑：
         // 如果节点有父节点，但 targetParent 为空，说明节点被拖出了父节点范围。
         // 此时应该执行“脱离父节点”的操作。
@@ -385,7 +416,6 @@ function App() {
   const clearNodes = () => {
     setNodes([]);
     setEdges([]);
-    setMermaidCode('');
     setNewNodeName('');
     setNodeDetails({});
     setSelectedNodeInfo(null);
@@ -396,99 +426,11 @@ function App() {
 
 
 
-  const handleLayoutChange = ({ positions, clusters }) => {
-    // 接收 Mermaid 渲染后的节点位置和结构信息
-    // positions: { "NodeLabel": { x, y, id }, ... }
-    // clusters: [ { label, x, y, width, height }, ... ]
-
-    // 我们不仅要更新位置，还要确保所有在 Mermaid 中出现的节点都存在于画布中
-
-    // 1. 同步节点
-    setNodes((prevNodes) => {
-      const newNodes = [...prevNodes];
-
-      // 标记已存在的节点
-      const normalize = (str) => str ? str.trim() : '';
-      const existingLabels = new Set(newNodes.map(n => normalize(n.data.label)));
-
-      Object.entries(positions).forEach(([label, pos]) => {
-        const normalizedLabel = normalize(label);
-        if (!existingLabels.has(normalizedLabel)) {
-          // 如果是新节点，添加到画布
-          // 检查这个节点是否属于某个 Cluster (Subgraph)
-          // 这一步比较难，因为 Mermaid DOM 结构没有直接告诉我们节点属于哪个 cluster
-          // 但我们可以通过位置判断，或者暂时全部放在顶层，等待用户整理
-
-          // 尝试查找父 Cluster
-          // 简单碰撞检测：如果节点中心在某个 Cluster 范围内
-          // 注意：pos.x/y 是相对于 SVG 的绝对坐标（大概）
-          let parentNodeId = undefined;
-
-          // 稍微偏移一点，避免重叠
-          const newNodeId = `node-gen-${pos.id || Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
-
-          const newNodeStyle = {
-            background: '#fff',
-            border: '1px solid #777',
-            padding: '10px',
-            borderRadius: '5px',
-            width: 150
-          };
-
-          // 标记这个节点
-          const nodeData = {
-            label: label
-          };
-
-          newNodes.push({
-            id: newNodeId,
-            data: nodeData,
-            position: { x: pos.x, y: pos.y }, // 这里先使用绝对坐标，后续可能需要转换
-            type: 'default',
-            style: newNodeStyle
-          });
-        } else {
-          // 更新已存在节点的位置
-          const nodeIndex = newNodes.findIndex(n => normalize(n.data.label) === normalizedLabel);
-          if (nodeIndex !== -1) {
-            const node = newNodes[nodeIndex];
-
-            let newStyle = node.style;
-
-            // 只有当节点没有父节点时，我们才强制更新位置，避免打乱用户在子图内的布局
-            // 或者我们应该更智能地处理
-            if (!node.parentNode) {
-              newNodes[nodeIndex] = {
-                ...node,
-                position: { x: pos.x, y: pos.y },
-                style: newStyle
-              };
-            } else {
-              // 即使不更新位置，也可能需要更新样式
-              newNodes[nodeIndex] = {
-                ...node,
-                style: newStyle
-              };
-            }
-          }
-        }
-      });
-
-      return newNodes;
-    });
-
-    // 2. 同步连线 (需要解析 Mermaid 代码)
-    // 这里暂时不做，因为从 DOM 获取连线关系比较复杂。
-    // 如果需要完全同步，最好是后端返回结构化的 JSON 数据，而不是纯 Mermaid 代码。
-    // 目前我们只做节点同步。
-  };
-
   const handleGenerate = async () => {
     if (!description && nodes.length === 0) return;
     setLoading(true);
     setProgress(0);
     setPlans([]);
-    setMermaidCode('');
     setNodeDetails({});
     setProgressText('开始生成...');
     try {
@@ -571,7 +513,6 @@ function App() {
               if (!isFirstPlanLoaded) {
                 isFirstPlanLoaded = true;
                 setActivePlanIndex(0);
-                setMermaidCode(data.plan_data.mermaid_code || '');
                 if (data.plan_data.node_details) {
                   setNodeDetails(data.plan_data.node_details);
                 }
@@ -579,7 +520,6 @@ function App() {
               }
             } else if (data.type === 'error') {
               console.error('Server error:', data.message);
-              setMermaidCode(`graph TD\nError[${data.message}]`);
             }
           } catch (e) {
             console.error('Error parsing streaming chunk:', e, line);
@@ -589,7 +529,6 @@ function App() {
 
     } catch (error) {
       console.error(error);
-      setMermaidCode(`graph TD\nError[生成失败: ${error.message}]`);
     } finally {
       setLoading(false);
       setProgressText('');
@@ -622,11 +561,13 @@ function App() {
     try {
       const currentPlan = plans[activePlanIndex];
       // Construct payload
+      const latestNodeDetails = nodeDetails && Object.keys(nodeDetails).length > 0 ? nodeDetails : currentPlan.node_details;
+
       const payload = {
         session_id: sessionId.trim() || undefined,
         plan_id: currentPlan.plan_id, // Pass plan_id
         current_plan: {
-          module_details: currentPlan.node_details,
+          module_details: latestNodeDetails,
           overall_description: currentPlan.description,
         },
         instruction: modificationInput,
@@ -660,6 +601,30 @@ function App() {
             if (data.type === 'progress') {
               setProgress(data.percent || 0);
               setProgressText(data.message || '修改中...');
+            } else if (data.type === 'assistant') {
+              const modeLabel = data.mode === 'plan_explain' ? '方案解读' : (data.mode === 'evidence_answer' ? '证据答疑' : '答疑');
+              const baseText = data.message || '';
+              const citations = Array.isArray(data.citations) ? data.citations : [];
+              const citationText = citations.length
+                ? `\n\n引用:\n${citations.map((c, i) => {
+                    const title = c.title || c.name || c.source || `Reference ${i + 1}`;
+                    const snippet = c.snippet ? ` - ${c.snippet}` : '';
+                    return `[${i + 1}] ${title}${snippet}`;
+                  }).join('\n')}`
+                : '';
+              const finalText = `${modeLabel}${baseText ? `: ${baseText}` : ''}${citationText}`;
+              setPlans(prevPlans => {
+                const updated = [...prevPlans];
+                const targetIndex = activePlanIndex;
+                const current = updated[targetIndex];
+                const updatedPerspective = current.perspective.replace(' (修改中...)', '');
+                updated[targetIndex] = {
+                  ...current,
+                  history: [...(current.history || []), { role: 'assistant', content: finalText, timestamp: Date.now() }],
+                  perspective: updatedPerspective
+                };
+                return updated;
+              });
             } else if (data.type === 'plan') {
               // Update the current plan with the new one
               const newPlanData = data.plan_data;
@@ -684,9 +649,10 @@ function App() {
               });
 
               // Update current view immediately
-              setMermaidCode(newPlanData.mermaid_code || '');
               if (newPlanData.node_details) {
                 setNodeDetails(newPlanData.node_details);
+              } else if (newPlanData.module_details) {
+                setNodeDetails(newPlanData.module_details);
               }
 
             } else if (data.type === 'error') {
@@ -739,12 +705,13 @@ function App() {
   const handleMermaidNodeClick = useCallback((nodeName) => {
     // 阻止冒泡需要在这个回调被调用的地方处理，这里只负责逻辑
     if (!nodeName) return;
+    const currentDetails = detailsRef.current || {};
 
     let foundModule = null;
-    if (Array.isArray(nodeDetails)) {
-      foundModule = nodeDetails.find(mod => mod.name === nodeName || mod.id === nodeName);
+    if (Array.isArray(currentDetails)) {
+      foundModule = currentDetails.find(mod => mod.name === nodeName || mod.id === nodeName);
     } else {
-      foundModule = nodeDetails[nodeName];
+      foundModule = currentDetails[nodeName];
     }
 
     if (foundModule) {
@@ -753,7 +720,7 @@ function App() {
     }
 
     // Try finding the node as a sub_node in any module
-    const entries = Array.isArray(nodeDetails) ? nodeDetails.map(m => [m.name, m]) : Object.entries(nodeDetails);
+    const entries = Array.isArray(currentDetails) ? currentDetails.map(m => [m.name, m]) : Object.entries(currentDetails);
     for (const [moduleName, moduleInfo] of entries) {
       if (moduleInfo.sub_nodes && Array.isArray(moduleInfo.sub_nodes)) {
         const subNode = moduleInfo.sub_nodes.find(sn => sn.name === nodeName || sn.id === nodeName);
@@ -771,7 +738,7 @@ function App() {
     }
 
     setSelectedNodeInfo({ name: nodeName, description: '暂无详细描述' });
-  }, [nodeDetails]);
+  }, []);
 
   // 开始编辑节点名称
   const startEditing = (node) => {
@@ -795,9 +762,115 @@ function App() {
     }
   };
 
-  const closeNodeDetails = () => {
+  const closeNodeDetails = useCallback(() => {
     setSelectedNodeInfo(null);
-  };
+    setIsNodeDetailEditing(false);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedNodeInfo) {
+      setNodeDetailDraft({ function: '', technical_methods: '' });
+      setIsNodeDetailEditing(false);
+      return;
+    }
+    setNodeDetailDraft({
+      function: selectedNodeInfo.function || '',
+      technical_methods: selectedNodeInfo.technical_methods || ''
+    });
+  }, [selectedNodeInfo]);
+
+  const handleNodeDetailsChange = useCallback((newDetails) => {
+    let sig = '';
+    try {
+      sig = JSON.stringify(newDetails);
+    } catch (e) { void e; }
+    if (sig && sig === nodeDetailsSigRef.current) return;
+    nodeDetailsSigRef.current = sig;
+    setNodeDetails(newDetails);
+    setPlans(prevPlans => {
+      const updated = [...prevPlans];
+      if (updated[activePlanIndex]) {
+        updated[activePlanIndex] = {
+          ...updated[activePlanIndex],
+          node_details: newDetails
+        };
+      }
+      return updated;
+    });
+  }, [activePlanIndex]);
+
+  const updateSelectedNodeDetails = useCallback((detailsSource, selectedInfo, draft) => {
+    if (!detailsSource || !selectedInfo) return detailsSource;
+    let cloned;
+    try {
+      cloned = JSON.parse(JSON.stringify(detailsSource));
+    } catch (e) {
+      void e;
+      return detailsSource;
+    }
+
+    const normalize = (value) => String(value || '').trim();
+    const draftFunction = normalize(draft.function);
+    const draftTechnicalMethods = normalize(draft.technical_methods);
+    const selectedName = normalize(selectedInfo.name);
+    const selectedId = normalize(selectedInfo.id);
+    const parentName = normalize(selectedInfo.parentModule);
+
+    const applyDraft = (target) => {
+      if (!target) return false;
+      target.function = draftFunction;
+      target.technical_methods = draftTechnicalMethods;
+      return true;
+    };
+
+    if (Array.isArray(cloned)) {
+      if (selectedInfo.isSubNode) {
+        const parent = cloned.find((module) =>
+          normalize(module?.name) === parentName || normalize(module?.id) === parentName
+        );
+        if (!parent || !Array.isArray(parent.sub_nodes)) return detailsSource;
+        const subNode = parent.sub_nodes.find((sn) =>
+          normalize(sn?.name) === selectedName || normalize(sn?.id) === selectedId
+        );
+        if (!applyDraft(subNode)) return detailsSource;
+        return cloned;
+      }
+      const module = cloned.find((item) =>
+        normalize(item?.name) === selectedName ||
+        normalize(item?.id) === selectedId
+      );
+      if (!applyDraft(module)) return detailsSource;
+      return cloned;
+    }
+
+    const moduleEntries = Object.entries(cloned);
+
+    if (selectedInfo.isSubNode) {
+      const parentEntry = moduleEntries.find(([key, module]) =>
+        normalize(key) === parentName ||
+        normalize(module?.name) === parentName ||
+        normalize(module?.id) === parentName
+      );
+      if (!parentEntry) return detailsSource;
+      const parent = parentEntry[1];
+      if (!Array.isArray(parent.sub_nodes)) return detailsSource;
+      const subNode = parent.sub_nodes.find((sn) =>
+        normalize(sn?.name) === selectedName || normalize(sn?.id) === selectedId
+      );
+      if (!applyDraft(subNode)) return detailsSource;
+      return cloned;
+    }
+
+    const moduleEntry = moduleEntries.find(([key, module]) =>
+      normalize(key) === selectedName ||
+      normalize(module?.name) === selectedName ||
+      normalize(module?.id) === selectedId
+    );
+    if (!moduleEntry) return detailsSource;
+    const module = moduleEntry[1];
+    if (!applyDraft(module)) return detailsSource;
+    return cloned;
+  }, []);
 
   const handleExport = async () => {
     if (!resultFlowRef.current) return;
@@ -847,11 +920,108 @@ function App() {
     }
   };
 
+  const saveSnapshotToSessionTree = useCallback(async (detailsOverride, messageContent, successToast) => {
+    if (plans.length === 0 || !plans[activePlanIndex]) return false;
+    try {
+      const currentPlan = plans[activePlanIndex];
+      const latestNodeDetails = detailsOverride ?? (nodeDetails && Object.keys(nodeDetails).length > 0 ? nodeDetails : currentPlan.node_details);
+      const payload = {
+        session_id: sessionId.trim() || undefined,
+        plan_id: currentPlan.plan_id,
+        current_plan: {
+          module_details: latestNodeDetails,
+          overall_description: currentPlan.description
+        },
+        original_query: description
+      };
+      const res = await fetch('http://localhost:8000/sessions/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || '保存失败');
+      setPlans(prev => {
+        const u = [...prev];
+        const idx = activePlanIndex;
+        if (u[idx]) {
+          const msg = { role: 'system', content: messageContent || '已保存当前架构', timestamp: Date.now() };
+          u[idx] = { ...u[idx], plan_id: data.new_plan_id || u[idx].plan_id, history: [...(u[idx].history || []), msg] };
+        }
+        return u;
+      });
+      if (successToast) {
+        alert(successToast);
+      }
+      return true;
+    } catch (e) {
+      alert(`保存失败: ${e.message}`);
+      return false;
+    }
+  }, [plans, activePlanIndex, nodeDetails, sessionId, description]);
+
+  const handleSaveNodeDetailDraft = useCallback(async () => {
+    if (!selectedNodeInfo) return;
+    const updatedDetails = updateSelectedNodeDetails(resolvedNodeDetails, selectedNodeInfo, nodeDetailDraft);
+    handleNodeDetailsChange(updatedDetails);
+    setSelectedNodeInfo(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        function: (nodeDetailDraft.function || '').trim(),
+        technical_methods: (nodeDetailDraft.technical_methods || '').trim()
+      };
+    });
+    await saveSnapshotToSessionTree(
+      updatedDetails,
+      `已保存节点「${selectedNodeInfo.name}」详情`,
+      `已保存节点「${selectedNodeInfo.name}」并写入方案快照`
+    );
+    setIsNodeDetailEditing(false);
+  }, [selectedNodeInfo, nodeDetailDraft, resolvedNodeDetails, updateSelectedNodeDetails, handleNodeDetailsChange, saveSnapshotToSessionTree]);
+
+  const handleSaveSnapshot = async () => {
+    await saveSnapshotToSessionTree(undefined, '已保存当前架构', '已保存当前架构');
+  };
+
+  const handleRevertLast = async () => {
+    try {
+      if (plans.length === 0 || !plans[activePlanIndex]) throw new Error('无可用方案');
+      const currentPlan = plans[activePlanIndex];
+      const params = new URLSearchParams();
+      params.set('session_id', sessionId.trim() || 'anonymous_session');
+      if (currentPlan.plan_id) params.set('plan_id', currentPlan.plan_id);
+      const res = await fetch(`http://localhost:8000/sessions/revert?${params.toString()}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || '无法回退');
+      const p = data.plan;
+      const cp = p?.arch_json || {};
+      const details = cp.module_details || cp;
+      if (!details) throw new Error('快照缺少模块数据');
+      setNodeDetails(details);
+      setPlans(prev => {
+        const u = [...prev];
+        const idx = activePlanIndex;
+        if (u[idx]) {
+          u[idx] = {
+            ...u[idx],
+            plan_id: p.plan_id || u[idx].plan_id,
+            node_details: details,
+            description: p.description || cp.overall_description || u[idx].description,
+            perspective: p.perspective || u[idx].perspective,
+            history: [...(u[idx].history || []), { role: 'system', content: '已回退到上一版本', timestamp: Date.now() }]
+          };
+        }
+        return u;
+      });
+      alert('已回退到上一版本');
+    } catch (e) {
+      alert(`恢复失败: ${e.message}`);
+    }
+  };
+
   return (
     <div className="app-container">
-      <header>
-        <h1>DiaMaid</h1>
-      </header>
 
       <main className="main-content">
         <div className="generator-layout" style={viewMode === 'result' ? { gridTemplateColumns: '320px 1fr' } : {}}>
@@ -889,6 +1059,7 @@ function App() {
                       boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
                     }}>
                       {msg.role === 'system' && <strong style={{ display: 'block', fontSize: '0.8rem', color: '#666', marginBottom: '2px' }}>System</strong>}
+                      {msg.role === 'assistant' && <strong style={{ display: 'block', fontSize: '0.8rem', color: '#666', marginBottom: '2px' }}>Assistant</strong>}
                       {msg.content}
                     </div>
                   ))}
@@ -1041,7 +1212,7 @@ function App() {
               </button>
             </div>
 
-            <div className="left-card" style={{ flex: '0 0 auto', display: viewMode === 'result' ? 'none' : 'flex' }}>
+            <div className="left-card" style={{ flex: '0 0 auto', display: viewMode === 'result' ? 'none' : 'flex', minHeight: 0 }}>
               <div className="card-title" style={{ fontSize: '0.9rem', color: '#666' }}>快速测试渲染 JSON (跳过后端)</div>
               <textarea
                 className="styled-input"
@@ -1062,57 +1233,55 @@ function App() {
           </div>
 
           {/* --- 中间画布 (节点) --- */}
-          <div className="panel canvas-panel" ref={reactFlowWrapper} style={{ height: '100%', width: '100%', overflow: 'hidden', display: viewMode === 'result' ? 'none' : undefined }}>
-            <div className="card-title" style={{ padding: '10px', borderBottom: '1px solid #eee', position: 'absolute', top: 0, left: 0, zIndex: 10, background: 'rgba(255,255,255,0.8)', width: '100%' }}>
-              节点编辑区
-            </div>
+          {viewMode !== 'result' && (
+            <div className="panel canvas-panel" ref={reactFlowWrapper} style={{ height: '100%', width: '100%', overflow: 'hidden' }}>
+              <div className="card-title" style={{ padding: '10px', borderBottom: '1px solid #eee', position: 'absolute', top: 0, left: 0, zIndex: 10, background: 'rgba(255,255,255,0.8)', width: '100%' }}>
+                节点编辑区
+              </div>
 
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
-              onNodeClick={onNodeClick}
-              onPaneClick={closeNodeDetails} // 点击空白处关闭详情
-              onNodeDragStop={onNodeDragStop}
-              onEdgeDoubleClick={onEdgeDoubleClick}
-              onInit={setReactFlowInstance}
-              fitView
-              attributionPosition="bottom-right"
-              deleteKeyCode={['Backspace', 'Delete']}
-              nodesDraggable={!loading} // 生成时禁止拖拽
-              nodesConnectable={!loading} // 生成时禁止连线
-              elementsSelectable={!loading} // 生成时禁止选中
-              onNodesDelete={(nodesToDelete) => {
-                // 也可以在这里处理级联删除逻辑
-              }}
-            >
-              <Background color="#aaa" gap={16} />
-              <Controls />
-              {loading && (
+              <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onNodeClick={onNodeClick}
+                onPaneClick={closeNodeDetails}
+                onNodeDragStop={onNodeDragStop}
+                onEdgeDoubleClick={onEdgeDoubleClick}
+                fitView
+                attributionPosition="bottom-right"
+                deleteKeyCode={['Backspace', 'Delete']}
+                nodesDraggable={!loading}
+                nodesConnectable={!loading}
+                elementsSelectable={!loading}
+              >
+                <Background color="#aaa" gap={16} />
+                <Controls />
+                {loading && (
+                  <div style={{
+                    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                    backgroundColor: 'rgba(255,255,255,0.5)', zIndex: 100,
+                    display: 'flex', justifyContent: 'center', alignItems: 'center'
+                  }}>
+                    <div style={{ color: '#333', fontWeight: 'bold' }}>锁定中...</div>
+                  </div>
+                )}
+              </ReactFlow>
+
+              {nodes.length === 0 && (
                 <div style={{
-                  position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-                  backgroundColor: 'rgba(255,255,255,0.5)', zIndex: 100,
-                  display: 'flex', justifyContent: 'center', alignItems: 'center'
+                  position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+                  color: '#999', textAlign: 'center', zIndex: 5, pointerEvents: 'none'
                 }}>
-                  <div style={{ color: '#333', fontWeight: 'bold' }}>锁定中...</div>
+                  <p>在左侧添加节点，<br />然后在画布中拖拽、连线。</p>
                 </div>
               )}
-            </ReactFlow>
-
-            {nodes.length === 0 && (
-              <div style={{
-                position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-                color: '#999', textAlign: 'center', zIndex: 5, pointerEvents: 'none'
-              }}>
-                <p>在左侧添加节点，<br />然后在画布中拖拽、连线。</p>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* --- 右侧边栏 (多方案展示区) --- */}
-          <div className="panel sidebar-right" style={{ display: 'flex', flexDirection: 'column', flex: viewMode === 'result' ? 1 : '0 0 60%', position: 'relative' }}>
+            <div className="panel sidebar-right" style={{ display: 'flex', flexDirection: 'column', flex: viewMode === 'result' ? 1 : '0 0 60%', position: 'relative', minHeight: 0 }}>
             {/* 工作表 Tabs */}
             <div style={{
               display: 'flex',
@@ -1127,9 +1296,6 @@ function App() {
                     key={index}
                     onClick={() => {
                       setActivePlanIndex(index);
-                      setMermaidCode(plan.mermaid_code || '');
-                      setNodeDetails(plan.node_details || {});
-                      setSelectedNodeInfo(null);
                     }}
                     style={{
                       padding: '10px 20px',
@@ -1151,6 +1317,38 @@ function App() {
               {plans.length > 0 && (
                 <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                   <button
+                    onClick={handleSaveSnapshot}
+                    disabled={loading}
+                    style={{
+                      padding: '6px 15px',
+                      backgroundColor: '#ffffffff',
+                      color: '#2d76e2ff',
+                      border: '1px solid #2d76e2ff',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      fontWeight: '500'
+                    }}
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={handleRevertLast}
+                    disabled={loading}
+                    style={{
+                      padding: '6px 15px',
+                      backgroundColor: '#ffffffff',
+                      color: '#2d76e2ff',
+                      border: '1px solid #2d76e2ff',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      fontWeight: '500'
+                    }}
+                  >
+                    Revert
+                  </button>
+                  <button
                     onClick={handleExport}
                     disabled={loading}
                     style={{
@@ -1164,7 +1362,7 @@ function App() {
                       fontWeight: '500'
                     }}
                   >
-                    导出为 Word
+                    Export (.docx)
                   </button>
                   <button
                     onClick={() => setViewMode(viewMode === 'result' ? 'edit' : 'result')}
@@ -1188,20 +1386,22 @@ function App() {
 
             <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
               {/* 渲染图部分 */}
-              <div className="mermaid-wrapper" style={{ flex: 2, overflow: 'auto', borderRight: '1px solid #eee', padding: '20px', position: 'relative' }}>
-                {Object.keys(nodeDetails).length > 0 ? (
-                  <div style={{ width: '100%', height: '100%' }}>
-                    <ResultFlowViewer
-                      ref={resultFlowRef}
-                      nodeDetails={nodeDetails}
-                      onNodeClick={handleMermaidNodeClick}
-                      onPaneClick={closeNodeDetails} // Newly passed prop
-                    />
-                  </div>
-                ) : (
-                  <div style={{ color: '#999', textAlign: 'center', marginTop: '50px' }}>
-                    <h3>图表空闲</h3>
-                    <p>请在左侧输入需求并生成。</p>
+              <div className="mermaid-wrapper" style={{ flex: 3, overflow: 'hidden', borderRight: '1px solid #eee', position: 'relative', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ flex: 1, minHeight: 0, width: '100%' }}>
+                  <X6FlowViewer
+                    ref={resultFlowRef}
+                    nodeDetails={resolvedNodeDetails}
+                    onNodeClick={handleMermaidNodeClick}
+                    onPaneClick={closeNodeDetails}
+                    onNodeDetailsChange={handleNodeDetailsChange}
+                  />
+                </div>
+                {(Array.isArray(resolvedNodeDetails) ? resolvedNodeDetails.length === 0 : Object.keys(resolvedNodeDetails || {}).length === 0) && (
+                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+                    <div style={{ color: '#999', textAlign: 'center', marginTop: '50px' }}>
+                      <h3>图表空闲</h3>
+                      <p>请在左侧输入需求并生成。</p>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1234,12 +1434,70 @@ function App() {
                       </div>
                       <div style={{ backgroundColor: '#fff', padding: '10px', borderRadius: '4px', border: '1px solid #eee' }}>
                         <strong style={{ color: '#333' }}>功能:</strong>
-                        <div style={{ marginTop: '5px' }}>{selectedNodeInfo.function || '暂无'}</div>
+                        {isNodeDetailEditing ? (
+                          <textarea
+                            className="styled-input"
+                            rows={6}
+                            value={nodeDetailDraft.function}
+                            onChange={(e) => setNodeDetailDraft((prev) => ({ ...prev, function: e.target.value }))}
+                            style={{ marginTop: '8px', marginBottom: 0, resize: 'vertical', fontSize: '0.88rem', lineHeight: 1.5, minHeight: '110px' }}
+                          />
+                        ) : (
+                          <div style={{ marginTop: '8px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6, color: '#333', maxHeight: 'none' }}>
+                            {nodeDetailDraft.function || '暂无'}
+                          </div>
+                        )}
                       </div>
                       <div style={{ backgroundColor: '#fff', padding: '10px', borderRadius: '4px', border: '1px solid #eee' }}>
                         <strong style={{ color: '#333' }}>技术方法:</strong>
-                        <div style={{ marginTop: '5px' }}>{selectedNodeInfo.technical_methods || '暂无'}</div>
+                        {isNodeDetailEditing ? (
+                          <textarea
+                            className="styled-input"
+                            rows={6}
+                            value={nodeDetailDraft.technical_methods}
+                            onChange={(e) => setNodeDetailDraft((prev) => ({ ...prev, technical_methods: e.target.value }))}
+                            style={{ marginTop: '8px', marginBottom: 0, resize: 'vertical', fontSize: '0.88rem', lineHeight: 1.5, minHeight: '110px' }}
+                          />
+                        ) : (
+                          <div style={{ marginTop: '8px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6, color: '#333', maxHeight: 'none' }}>
+                            {nodeDetailDraft.technical_methods || '暂无'}
+                          </div>
+                        )}
                       </div>
+                      {!isNodeDetailEditing ? (
+                        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                          <button
+                            onClick={() => setIsNodeDetailEditing(true)}
+                            disabled={loading}
+                            style={{ padding: '4px 10px', background: '#fff', border: '1px solid #d0d7de', color: '#555', borderRadius: '4px', cursor: 'pointer', fontSize: '0.82rem' }}
+                          >
+                            编辑详情
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                          <button
+                            onClick={() => {
+                              setNodeDetailDraft({
+                                function: selectedNodeInfo.function || '',
+                                technical_methods: selectedNodeInfo.technical_methods || ''
+                              });
+                              setIsNodeDetailEditing(false);
+                            }}
+                            disabled={loading}
+                            style={{ padding: '4px 10px', background: '#fff', border: '1px solid #d0d7de', color: '#666', borderRadius: '4px', cursor: 'pointer', fontSize: '0.82rem' }}
+                          >
+                            取消
+                          </button>
+                          <button
+                            onClick={handleSaveNodeDetailDraft}
+                            disabled={loading}
+                            style={{ padding: '4px 10px', background: '#217cf3', border: '1px solid #217cf3', color: '#fff', borderRadius: '4px', cursor: 'pointer', fontSize: '0.82rem' }}
+                          >
+                            保存
+                          </button>
+                        </div>
+                      )}
                       {selectedNodeInfo.ports && (
                         <div style={{ backgroundColor: '#fff', padding: '10px', borderRadius: '4px', border: '1px solid #eee' }}>
                           <p><strong style={{ color: '#333' }}>输入:</strong></p>
@@ -1300,13 +1558,16 @@ function App() {
                           }
                         }
 
-                        // 3. Fallback to raw string value from json
+                        // 3. Fallback to raw value from json
                         const rawRefs = selectedNodeInfo.references;
                         if (rawRefs && String(rawRefs).toLowerCase() !== 'none' && String(rawRefs).toLowerCase() !== 'null') {
+                          const normalizedRawText = typeof rawRefs === 'string'
+                            ? rawRefs
+                            : JSON.stringify(rawRefs, null, 2);
                           return (
                             <div style={{ backgroundColor: '#fff', padding: '10px', borderRadius: '4px', border: '1px solid #eee' }}>
-                              <strong style={{ color: '#333' }}>来源 (仅名称匹配):</strong>
-                              <div style={{ marginTop: '5px' }}>{rawRefs}</div>
+                              <strong style={{ color: '#333' }}>来源:</strong>
+                              <div style={{ marginTop: '5px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{normalizedRawText}</div>
                             </div>
                           );
                         }

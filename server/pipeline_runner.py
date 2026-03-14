@@ -134,7 +134,7 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
         
         # === SELF-CORRECTION LOOP ===
         yield json.dumps({"type": "progress", "message": f"Detecting and resolving conflicts for option {i+1}...", "percent": int(base_percent + 15)}) + "\n"
-        max_retries = 2
+        max_retries = 5
         for attempt in range(max_retries + 1):
             if not current_arch_json: break
             
@@ -281,14 +281,37 @@ def run_edit_pipeline(plan_id, current_plan_json, user_instruction, original_que
     edit_result = editor.edit_plan(current_plan_json, user_instruction, history_summary, retriever)
     
     # Handle cases where edit_result might not be a dictionary (e.g., if JSON decoding failed inside editor)
-    if not isinstance(edit_result, dict) or not edit_result.get("revised_plan"):
+    if not isinstance(edit_result, dict):
+        yield json.dumps({"type": "error", "message": "Failed to generate valid editor output."}) + "\n"
+        return
+
+    output_type = edit_result.get("output_type")
+    modified_arch_json = edit_result.get("revised_plan")
+    modification_intent = edit_result.get("modification_intent", "User modified plan")
+    answer = edit_result.get("answer", {}) if isinstance(edit_result.get("answer"), dict) else {}
+    has_plan = bool(modified_arch_json)
+    has_answer = bool(answer.get("text") or answer.get("citations"))
+    allowed_modes = {"plan_update", "direct_answer", "evidence_answer", "plan_explain"}
+
+    if output_type not in allowed_modes:
+        output_type = "plan_update" if has_plan else ("direct_answer" if has_answer else "plan_update")
+
+    if has_plan:
+        output_type = "plan_update"
+    elif has_answer:
+        output_type = output_type if output_type in {"direct_answer", "evidence_answer", "plan_explain"} else "direct_answer"
+
+    if output_type in {"direct_answer", "evidence_answer", "plan_explain"}:
+        message = answer.get("text", "")
+        citations = answer.get("citations", [])
+        yield json.dumps({"type": "assistant", "mode": output_type, "message": message, "citations": citations}) + "\n"
+        yield json.dumps({"type": "progress", "message": "Modification complete!", "percent": 100}) + "\n"
+        return
+
+    if not has_plan:
         yield json.dumps({"type": "error", "message": "Failed to generate modified plan structure."}) + "\n"
         return
 
-    modified_arch_json = edit_result.get("revised_plan")
-    modification_intent = edit_result.get("modification_intent", "User modified plan")
-    thought_process = edit_result.get("thought", "")
-    
     print(f"✅ Editor Intent: {modification_intent}")
     
     # 2. Conflict Check & Refine Loop
