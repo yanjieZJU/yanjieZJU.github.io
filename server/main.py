@@ -22,11 +22,14 @@ app = FastAPI()
 origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -98,7 +101,7 @@ async def generate_mermaid(req: GenRequest):
                 user_query=req.prompt,
                 base_anchors=anchors_list,
                 user_relations=relations_list,
-                num_outputs=1, 
+                num_outputs=3, 
                 divergence=True,
                 session_id=req.session_id # Pass session_id
             ):
