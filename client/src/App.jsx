@@ -32,16 +32,20 @@ function App() {
   // 多方案状态
   const [plans, setPlans] = useState([]); // 存储所有返回的方案
   const [activePlanIndex, setActivePlanIndex] = useState(0); // 当前激活的方案索引
+  const [isMorePerspectivesOpen, setIsMorePerspectivesOpen] = useState(false);
   const plansRef = useRef(plans);
   const nodeDetailsSigRef = useRef('');
 
   const [nodeDetails, setNodeDetails] = useState({}); // 存储后端返回的节点详细信息
   const resolvedNodeDetails = useMemo(() => {
-    if (Array.isArray(nodeDetails)) return nodeDetails;
-    if (nodeDetails && Object.keys(nodeDetails).length > 0) return nodeDetails;
+    const hasNodeDetails = Array.isArray(nodeDetails)
+      ? nodeDetails.length > 0
+      : !!(nodeDetails && Object.keys(nodeDetails).length > 0);
+    if (hasNodeDetails) return nodeDetails;
     const currentPlan = plans[activePlanIndex];
     const fromPlan = currentPlan?.node_details ?? currentPlan?.module_details;
-    return fromPlan ?? nodeDetails;
+    if (typeof fromPlan !== 'undefined') return fromPlan;
+    return nodeDetails;
   }, [nodeDetails, plans, activePlanIndex]);
   const detailsRef = useRef(resolvedNodeDetails);
   useEffect(() => {
@@ -1020,6 +1024,11 @@ function App() {
     }
   };
 
+  const activePlan = plans[activePlanIndex] || null;
+  const otherPlans = plans
+    .map((plan, index) => ({ plan, index }))
+    .filter((item) => item.index !== activePlanIndex);
+
   return (
     <div className="app-container">
 
@@ -1285,101 +1294,171 @@ function App() {
             {/* 工作表 Tabs */}
             <div style={{
               display: 'flex',
+              flexDirection: 'column',
               borderBottom: '1px solid #ccc',
               backgroundColor: '#f5f5f5',
-              alignItems: 'center',
-              justifyContent: 'space-between'
+              gap: '4px'
             }}>
-              <div style={{ display: 'flex' }}>
-                {plans.length > 0 ? plans.map((plan, index) => (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', flex: '1 1 320px', minWidth: 0, overflowX: 'auto' }}>
+                  {activePlan ? (
                   <div
-                    key={index}
-                    onClick={() => {
-                      setActivePlanIndex(index);
-                    }}
+                    onClick={() => setIsMorePerspectivesOpen(false)}
                     style={{
                       padding: '10px 20px',
                       cursor: 'pointer',
-                      backgroundColor: activePlanIndex === index ? '#fff' : 'transparent',
-                      borderBottom: activePlanIndex === index ? '2px solid #217cf3' : '2px solid transparent',
-                      fontWeight: activePlanIndex === index ? 'bold' : 'normal',
-                      color: activePlanIndex === index ? '#217cf3' : '#666'
+                      backgroundColor: '#fff',
+                      borderBottom: '2px solid #217cf3',
+                      fontWeight: 'bold',
+                      color: '#217cf3',
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0
                     }}
                   >
-                    {plan.perspective || `方案 ${index + 1}`}
+                    {activePlan.perspective || `方案 ${activePlanIndex + 1}`}
                   </div>
-                )) : (
+                ) : (
                   <div style={{ padding: '10px 20px', color: '#999' }}>暂无方案</div>
                 )}
-              </div>
+                {otherPlans.length > 0 && (
+                  <div
+                    onClick={() => {
+                      setIsMorePerspectivesOpen((prev) => !prev);
+                    }}
+                    style={{
+                      padding: '8px 12px',
+                      cursor: 'pointer',
+                      marginLeft: '8px',
+                      borderRadius: '6px',
+                      border: '1px solid #d5dbe7',
+                      backgroundColor: isMorePerspectivesOpen ? '#eaf2ff' : '#fff',
+                      color: '#3e4a5a',
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0
+                    }}
+                  >
+                    {`查看更多视角（+${otherPlans.length}）`}
+                  </div>
+                )}
+                </div>
 
-              {/* 返回/全屏 按钮 */}
-              {plans.length > 0 && (
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                  <button
-                    onClick={handleSaveSnapshot}
-                    disabled={loading}
-                    style={{
-                      padding: '6px 15px',
-                      backgroundColor: '#ffffffff',
-                      color: '#2d76e2ff',
-                      border: '1px solid #2d76e2ff',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      fontSize: '13px',
-                      fontWeight: '500'
-                    }}
-                  >
-                    Save
-                  </button>
-                  <button
-                    onClick={handleRevertLast}
-                    disabled={loading}
-                    style={{
-                      padding: '6px 15px',
-                      backgroundColor: '#ffffffff',
-                      color: '#2d76e2ff',
-                      border: '1px solid #2d76e2ff',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      fontSize: '13px',
-                      fontWeight: '500'
-                    }}
-                  >
-                    Revert
-                  </button>
-                  <button
-                    onClick={handleExport}
-                    disabled={loading}
-                    style={{
-                      padding: '6px 15px',
-                      backgroundColor: '#28a745',
-                      color: '#fff',
-                      border: '1px solid #28a745',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      fontSize: '13px',
-                      fontWeight: '500'
-                    }}
-                  >
-                    Export (.docx)
-                  </button>
-                  <button
-                    onClick={() => setViewMode(viewMode === 'result' ? 'edit' : 'result')}
-                    style={{
-                      marginRight: '15px',
-                      padding: '6px 15px',
-                      backgroundColor: viewMode === 'result' ? '#fff' : '#217cf3',
-                      color: viewMode === 'result' ? '#217cf3' : '#fff',
-                      border: '1px solid #217cf3',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      fontSize: '13px',
-                      fontWeight: '500'
-                    }}
-                  >
-                    {viewMode === 'result' ? '← 返回工作区' : '全屏查看方案'}
-                  </button>
+                {plans.length > 0 && (
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end', padding: '8px 12px', maxWidth: '100%' }}>
+                    <button
+                      onClick={handleSaveSnapshot}
+                      disabled={loading}
+                      style={{
+                        padding: '6px 15px',
+                        backgroundColor: '#ffffffff',
+                        color: '#2d76e2ff',
+                        border: '1px solid #2d76e2ff',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: '500',
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0
+                      }}
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={handleRevertLast}
+                      disabled={loading}
+                      style={{
+                        padding: '6px 15px',
+                        backgroundColor: '#ffffffff',
+                        color: '#2d76e2ff',
+                        border: '1px solid #2d76e2ff',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: '500',
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0
+                      }}
+                    >
+                      Revert
+                    </button>
+                    <button
+                      onClick={handleExport}
+                      disabled={loading}
+                      style={{
+                        padding: '6px 15px',
+                        backgroundColor: '#28a745',
+                        color: '#fff',
+                        border: '1px solid #28a745',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: '500',
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0
+                      }}
+                    >
+                      Export (.docx)
+                    </button>
+                    <button
+                      onClick={() => setViewMode(viewMode === 'result' ? 'edit' : 'result')}
+                      style={{
+                        padding: '6px 15px',
+                        backgroundColor: viewMode === 'result' ? '#fff' : '#217cf3',
+                        color: viewMode === 'result' ? '#217cf3' : '#fff',
+                        border: '1px solid #217cf3',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: '500',
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0
+                      }}
+                    >
+                      {viewMode === 'result' ? '← 返回工作区' : '全屏查看方案'}
+                    </button>
+                  </div>
+                )}
+              </div>
+              {isMorePerspectivesOpen && otherPlans.length > 0 && (
+                <div style={{
+                  margin: '0 12px 10px',
+                  padding: '8px',
+                  border: '1px solid #e3e8f0',
+                  borderRadius: '8px',
+                  backgroundColor: '#fff'
+                }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '8px' }}>
+                    {otherPlans.map(({ plan, index }) => (
+                      <div
+                        key={index}
+                        onClick={() => {
+                          setActivePlanIndex(index);
+                          setIsMorePerspectivesOpen(false);
+                        }}
+                        style={{
+                          border: '1px solid #e8edf5',
+                          borderRadius: '6px',
+                          padding: '8px 10px',
+                          cursor: 'pointer',
+                          backgroundColor: '#f9fbff'
+                        }}
+                      >
+                        <div style={{ fontWeight: 600, color: '#2a3550', marginBottom: '4px', fontSize: '13px' }}>
+                          {plan.perspective || `方案 ${index + 1}`}
+                        </div>
+                        <div style={{
+                          color: '#596579',
+                          fontSize: '12px',
+                          lineHeight: 1.4,
+                          overflow: 'hidden',
+                          display: '-webkit-box',
+                          WebkitLineClamp: 3,
+                          WebkitBoxOrient: 'vertical'
+                        }}>
+                          {plan.overall_description || plan.description || '暂无摘要'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

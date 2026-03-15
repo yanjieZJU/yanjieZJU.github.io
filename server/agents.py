@@ -336,7 +336,7 @@ class PlannerAgent:
             reference_context_str += ref_block
 
         prompt = f"""
-        You are a creative System Architect.
+        You are a creative System Architect. You are required to design a system based on the user's requirements. Remember that you are facing a designer, so do not use too much technical jargon (like xxx algorithm, engine, neural network, etc.).
         
         ## Context
         The user wants to design a system described as: ```{user_query}```.
@@ -345,6 +345,12 @@ class PlannerAgent:
         ## Task
         Generate **{num_outputs}** DISTINCT and DIVERGENT extension plans from different function implementation paths to enhance this system. 
         No matter what perspective you adopt, always keep *align with user requirements* as the primary goal. You can achieve this by using different functions or technologies.
+
+        ## Language Policy
+        - Understand the user's input as-is (Chinese or English) without changing its intent.
+        - Keep internal reasoning and retrieval assumptions unchanged.
+        - Final JSON text fields should be primarily in Chinese for user-facing readability.
+        - Proper nouns, model names, protocol names, and indispensable technical terms may remain in English.
         
         ## Reference Material (Knowledge Injection)
         We have retrieved knowledge from different domain clusters to inspire you.
@@ -404,7 +410,9 @@ class PlannerAgent:
         print(f"\n🧠 Generating {num_outputs} divergent plans...")
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4o-2024-11-20",
+                # model="gpt-4o-2024-11-20",
+                model = "gpt-5.2-chat-latest",
+
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.9, # Higher temperature for creativity
                 response_format={"type": "json_object"},
@@ -700,14 +708,18 @@ class IntegratorAgent:
         
         ## TASK
         Conceive the complete data link and functional architecture, and ultimately synthesize a cohesive flowchart/architecture diagram.
+        ## Language Policy
+        - Keep retrieval-grounded technical content unchanged in meaning.
+        - User-facing textual fields in final JSON should be primarily in Chinese.
+        - Proper nouns and necessary technical terms may remain in English.
         ### Steps and Rules 
         1. **Define the main storyline**: Define a clear functional mainline based on the user's requirements and the provided perspective, and synthesize a detailed overall_description of the main storyline.
-        2. **Define Modules**: Define all the necessary modules for this achitecture. 
+        2. **Define Modules**: Define all the necessary modules for this achitecture. Keep it simple, with a maximum of 4-5 key functional modules. Define inputs and outputs
         First, consider all the modules that are necessary for the mainline, including the base anchors. 
         Then, in addition to the main line, add supporting functional nodes. These nodes can be connected to the main line and derived from it, but they MUST NOT be completely independent of the main line.
-            - **Naming Rule**: Use more specific and contextually relevant node names to enable users to easily identify their functions. Avoid directly copying the wording from the paper, using generic technical labels (such as parser, engine) or long implementation names (e.g. NOT "Gaze360: Physically Unconstrained...").
+            - **Naming Rule**: Use more specific and contextually relevant node names to enable users to easily identify their functions. DO NOT directly copying the wording from the paper. DO NOT use technical labels (such as parser, engine, neural network, etc.) or long implementation names (e.g. NOT "Gaze360: Physically Unconstrained...").
             - Ensure the added nodes from the divergent plans are integrated meaningfully.
-            - **Provide highly detailed descriptions for both `function` and `technical_methods` from the retrieved information BUT DO NOT FABRICATE.** You must explicitly articulate the module's specific role, core responsibilities, and crucial importance within the overall system. Explain exactly HOW the technical methods work, process data, and why they were chosen, avoiding brief or vague summaries.
+            - **Provide detailed descriptions for both `function` and `technical_methods` from the retrieved information BUT DO NOT FABRICATE.** You must explicitly articulate the module's specific role, core responsibilities, and crucial importance within the overall system. Explain exactly HOW the technical methods work, process data, and why they were chosen, avoiding brief or vague summaries.
             - If there are subnodes within the modules (based on the retrieved information and relevant to the current context), they should also be defined. Explicitly map out the intermediate processes and data flow within the module using subnodes so its internal logic is transparent.
         3. **Connect the Flow**: Use the topology info to decide logical connections. 
             - Ensure new conceptual modules have comprehensive connections with the base logic to fully realize their functional value. DO NOT let them become dead ends unless explicitly defined as output endpoints.
@@ -720,7 +732,7 @@ class IntegratorAgent:
         
         ### Final Output Structure (in JSON format)
         {{
-            "overall_description": "...",
+            "overall_description": "A concise, clear explanation of the overall system architecture, highlighting its mainline and innovation points",
             "module_details": [
                 {{
                     "name": "the module name",
@@ -767,7 +779,9 @@ class IntegratorAgent:
     """
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4o-2024-11-20",
+                # model="gpt-4o-2024-11-20",
+                model = "gpt-5.2-chat-latest",
+
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.8,
                 response_format={"type": "json_object"},
@@ -808,11 +822,18 @@ class IntegratorAgent:
         **CRITICAL REQUIREMENT:** 
         `module_details` MUST be a LIST containing the FULL, COMPLETE architecture with ALL nodes (both modified and unmodified) as objects. Do NOT only output the changed nodes. Failure to output unmodified nodes will break the system.
 
+        ## Language Policy
+        - Preserve architecture structure and node/link consistency exactly.
+        - Keep user-facing textual fields primarily in Chinese.
+        - Proper nouns and necessary technical terms may remain in English.
+
         Return the FULLY CORRECTED JSON object.
         """
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                # model="gpt-4o-2024-11-20",
+                model = "gpt-5.2-chat-latest",
+
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1, # Lower temperature for precision fixes
                 response_format={"type": "json_object"},
@@ -903,73 +924,8 @@ class IntegratorAgent:
 class EditorAgent:
     def __init__(self, client):
         self.client = client
-        self.model = "gpt-4o-2024-11-20"
-
-    def _extract_module_names(self, current_plan):
-        names = []
-        if not isinstance(current_plan, dict):
-            return names
-        module_details = current_plan.get("module_details", {})
-        if isinstance(module_details, dict):
-            for key, value in module_details.items():
-                if key:
-                    names.append(str(key))
-                if isinstance(value, dict):
-                    if value.get("name"):
-                        names.append(str(value["name"]))
-                    if value.get("id"):
-                        names.append(str(value["id"]))
-        elif isinstance(module_details, list):
-            for item in module_details:
-                if not isinstance(item, dict):
-                    continue
-                if item.get("name"):
-                    names.append(str(item["name"]))
-                if item.get("id"):
-                    names.append(str(item["id"]))
-        cleaned = []
-        seen = set()
-        for name in names:
-            n = name.strip()
-            if n and n not in seen:
-                cleaned.append(n)
-                seen.add(n)
-        return cleaned
-
-    def _build_targeted_edit_directive(self, current_plan, user_instruction):
-        module_names = self._extract_module_names(current_plan)
-        if not module_names:
-            return ""
-        instruction = str(user_instruction or "")
-        instruction_lower = instruction.lower()
-        mentioned = []
-        for name in module_names:
-            if name.lower() in instruction_lower:
-                mentioned.append(name)
-        mentioned_unique = []
-        seen = set()
-        for name in mentioned:
-            k = name.lower()
-            if k not in seen:
-                mentioned_unique.append(name)
-                seen.add(k)
-        focus_keywords = [
-            "单个", "单一", "局部", "节点", "模块", "细化", "细致", "详细", "深入", "精准", "仅修改", "只修改", "只改",
-            "function", "technical", "sub node", "sub-node","subnode", "子节点", "子模块", "功能", "技术方法"
-        ]
-        has_focus_signal = any(keyword in instruction_lower for keyword in focus_keywords)
-        if len(mentioned_unique) != 1 or not has_focus_signal:
-            return ""
-        target = mentioned_unique[0]
-        return f"""
-        ## Targeted Node Edit Mode
-        The user instruction points to a single module: "{target}".
-        You must apply a precise local edit:
-        1. Modify only this target module, or its `sub_nodes`, or edges directly needed for this target.
-        2. Prefer edits on `function`, `technical_methods`, and child sub-node additions when requested.
-        3. Keep other modules unchanged unless a minimal consistency fix is strictly required.
-        4. In `modification_intent`, explicitly mention this is a single-node targeted refinement.
-        """
+        # self.model = "gpt-4o-2024-11-20"
+        self.model = "gpt-5.2-chat-latest"
 
     def edit_plan(self, current_plan, user_instruction, history_summary, retriever):
         """
@@ -1015,13 +971,12 @@ class EditorAgent:
                 current_plan = json.loads(current_plan)
             except:
                 pass
-        targeted_edit_directive = self._build_targeted_edit_directive(current_plan, user_instruction)
 
         system_prompt = f"""
         You are an expert System Architect. You are collaborating with a user to modify a system architecture design.
         
         ## Your Capabilities
-        1. **Analyze**: Understand the user's intent and the current architecture.
+        1. **Analyze**: Understand the user's intent and the current architecture. 
         2. **Retrieve**: If the user asks for something that need specific knowledge or technical details (e.g., "Add a Kafka stream", "Use a Transformer model"), use the `retrieve_knowledge` tool to get technical details.
         3. **Modify**: Update the architecture JSON to reflect the changes.
         
@@ -1042,13 +997,21 @@ class EditorAgent:
            - evidence_answer: answer with evidence and citations without changing the plan
            - plan_explain: explain the current plan without changing it
         4. Output a FINAL JSON response matching the required format below.
+
+        ## Language Policy
+        - Understand the user instruction as-is (Chinese or English) without changing intent.
+        - Do not alter plan structure rules or retrieval behavior because of language choice.
+        - In final output, user-facing textual fields should be primarily in Chinese.
+        - Proper nouns and indispensable technical terms may remain in English.
         
         ## Modification Rules
         1. **Locality**: Only change what is requested.
+           - In single-node mode, modify only the target module, its `sub_nodes`, and minimally required adjacent edges.
+           - Keep all other modules unchanged unless a strict consistency fix is necessary.
         2. **Preservation**: Keep existing modules unless asked to remove them.
         3. **Consistency**: Ensure the graph remains connected and logical.
         4. **Integrity**: Ensure all `source_mod` and `target_mod` in ports refer to valid keys in `module_details`.
-        {targeted_edit_directive}
+        
         
         ## Final Output Format
         If you choose plan_update, output:
@@ -1061,9 +1024,9 @@ class EditorAgent:
                     {{
                         "name": "ModuleNameA",
                         "brief_description": "...",
-                        "function": "...",
-                        "technical_methods": "...",
-                        "role": "...",
+                        "function": "Detailed explanation of the module's function, its core responsibilities, and its crucial role and importance within the overall system architecture.",
+                        "technical_methods": "Detailed description of the specific algorithms, models, or technical methods used, including HOW they process data and why they are selected. You MUST abstract away the original paper context. ",
+                        "role": "choose from ['input', 'output', 'processing', 'data']",
                         "sub_nodes": [],
                         "ports": {{}}
                     }},
