@@ -714,10 +714,10 @@ class IntegratorAgent:
         - Proper nouns and necessary technical terms may remain in English.
         ### Steps and Rules 
         1. **Define the main storyline**: Define a clear functional mainline based on the user's requirements and the provided perspective, and synthesize a detailed overall_description of the main storyline.
-        2. **Define Modules**: Define all the necessary modules for this achitecture. Keep it simple, with a maximum of 4-5 key functional modules. Define inputs and outputs
+        2. **Define Modules**: Define all the necessary modules for this achitecture. Keep it concise, with a maximum of 6-8 key functional processing modules (input and output nodes are not considered as functional processing modules). Define inputs and outputs
         First, consider all the modules that are necessary for the mainline, including the base anchors. 
         Then, in addition to the main line, add supporting functional nodes. These nodes can be connected to the main line and derived from it, but they MUST NOT be completely independent of the main line.
-            - **Naming Rule**: Use more specific and contextually relevant node names to enable users to easily identify their functions. DO NOT directly copying the wording from the paper. DO NOT use technical labels (such as parser, engine, neural network, etc.) or long implementation names (e.g. NOT "Gaze360: Physically Unconstrained...").
+            - **Naming Rule**: Use concise, plain-language names that describe *what the node does*, not what it is. Avoid generic structural suffixes like "模块", "单元", "矩阵", "引擎", "系统", "组件", "层", "网络". Instead of "优先级解释展示单元" use "优先级解释"; instead of "动态优先级与资源决策模块" use "优先级动态分析"; instead of "任务特征抽取单元" use "任务特征提取". DO NOT directly copy wording from the paper. DO NOT use technical labels (such as parser, engine, neural network, etc.) or long implementation names (e.g. NOT "Gaze360: Physically Unconstrained...").
             - Ensure the added nodes from the divergent plans are integrated meaningfully.
             - **Provide detailed descriptions for both `function` and `technical_methods` from the retrieved information BUT DO NOT FABRICATE.** You must explicitly articulate the module's specific role, core responsibilities, and crucial importance within the overall system. Explain exactly HOW the technical methods work, process data, and why they were chosen, avoiding brief or vague summaries.
             - If there are subnodes within the modules (based on the retrieved information and relevant to the current context), they should also be defined. Explicitly map out the intermediate processes and data flow within the module using subnodes so its internal logic is transparent.
@@ -1011,6 +1011,7 @@ class EditorAgent:
         2. **Preservation**: Keep existing modules unless asked to remove them.
         3. **Consistency**: Ensure the graph remains connected and logical.
         4. **Integrity**: Ensure all `source_mod` and `target_mod` in ports refer to valid keys in `module_details`.
+        5. **Naming Rule**: When adding or renaming nodes, use concise plain-language names that describe *what the node does*. Avoid generic structural suffixes like "模块", "单元", "矩阵", "引擎", "系统", "组件", "层", "网络". For example: "优先级解释" not "优先级解释展示单元"; "优先级动态分析" not "动态优先级与资源决策模块"; "任务特征提取" not "任务特征抽取单元".
         
         
         ## Final Output Format

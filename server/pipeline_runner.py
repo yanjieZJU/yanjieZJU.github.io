@@ -6,16 +6,16 @@ import json
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import *
-from server.agents import (
-    PlannerAgent, 
-    RetrieverAgent, 
-    IntegratorAgent,  
+from agents import (
+    PlannerAgent,
+    RetrieverAgent,
+    IntegratorAgent,
     ConflictSolver,
     EditorAgent,
     client
 )
-from server.retriever_neo4j import get_global_stores
-from server.session_manager import create_initial_plan, create_modified_plan, get_session_tree, get_plan_lineage
+from retriever_neo4j import get_global_stores
+from session_manager import create_initial_plan, create_modified_plan, get_session_tree, get_plan_lineage
 
 def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, divergence=True, session_id=None):
     vector_store, graph_store = get_global_stores()

@@ -9,7 +9,8 @@ const ROLE_THEME = {
   input: { fill: 'rgba(56,132,255,0.1)', stroke: '#3b82f6', text: '#2456b3', light: '#e8f1ff' },
   processing: { fill: 'rgba(245,158,11,0.11)', stroke: '#f59e0b', text: '#9a6700', light: '#fff4df' },
   output: { fill: 'rgba(34,197,94,0.12)', stroke: '#22c55e', text: '#1f7a3c', light: '#e7f9ee' },
-  unknown: { fill: 'rgba(156,163,175,0.1)', stroke: '#9ca3af', text: '#4b5563', light: '#f3f4f6' },
+  data: { fill: 'rgba(156,163,175,0.1)', stroke: '#9ca3af', text: '#4b5563', light: '#f3f4f6' },
+  unknown: { fill: 'rgba(245,158,11,0.11)', stroke: '#f59e0b', text: '#9a6700', light: '#fff4df' },
 };
 
 function normalizeRole(role) {
@@ -20,9 +21,11 @@ function getRoleLane(role) {
   const raw = normalizeRole(role);
   if (!raw) return 'unknown';
   const category = raw.includes(':') ? raw.split(':')[0].trim() : raw;
+  if (category.includes('data') || category.includes('storage') || category.includes('database') || category.includes('knowledge')) return 'data';
   if (category.includes('input') || category.includes('sensing')) return 'input';
   if (category.includes('output') || category.includes('actuation') || category.includes('presentation')) return 'output';
   if (category.includes('processing') || category.includes('core') || category.includes('inference') || category.includes('reasoning')) return 'processing';
+  if (raw.includes('data') || raw.includes('storage') || raw.includes('database')) return 'data';
   if (raw.includes('input')) return 'input';
   if (raw.includes('output')) return 'output';
   if (raw.includes('processing')) return 'processing';
@@ -187,14 +190,17 @@ function runRoleLayout(nodes, edges) {
   });
 
   const levelMap = computeProcessingLevels(topNodes, edges, childToParent);
-  const laneOrder = { input: 0, processing: 1, output: 2, unknown: 3 };
-  const laneX = { input: 80, processing: 540, output: 1040, unknown: 790 };
-  const laneY = { input: 40, processing: 40, output: 40, unknown: 40 };
+  // data lane sits at the top as a horizontal row; other lanes stack vertically in columns below
+  const laneOrder = { data: 0, input: 1, processing: 2, output: 3, unknown: 4 };
+  const colLaneX = { input: 80, processing: 500, output: 960, unknown: 730 };
   const rowGap = 90;
+  const colGap = 60;
   const childGap = 16;
+  const DATA_TOP = 40;
+  const DATA_NODE_GAP = 40;
 
   const ordered = [...topNodes].sort((a, b) => {
-    const laneDiff = (laneOrder[a.lane] ?? 3) - (laneOrder[b.lane] ?? 3);
+    const laneDiff = (laneOrder[a.lane] ?? 4) - (laneOrder[b.lane] ?? 4);
     if (laneDiff !== 0) return laneDiff;
     const levelDiff = (levelMap[a.id] || 0) - (levelMap[b.id] || 0);
     if (levelDiff !== 0) return levelDiff;
@@ -214,45 +220,79 @@ function runRoleLayout(nodes, edges) {
     subnodeDims[n.id] = { w: NODE_W, h: dynH };
   });
 
-  ordered.forEach(n => {
-    const lane = n.lane || 'unknown';
-    const level = levelMap[n.id] || 0;
-    const x = (laneX[lane] ?? laneX.unknown) + (lane === 'processing' ? Math.min(level, 4) * 42 : 0);
-
+  // Helper: compute node height without placing it
+  function computeNodeDims(n) {
     const w = n.isGroup ? GROUP_W : NODE_W;
     const innerW = Math.max(10, w - 24);
     const titleText = String(n.label || '').trim();
     const rawDesc = String(n.desc || '').replace(/\s+/g, ' ').trim();
-    let computedH = NODE_H;
-    let computedOverlayTop = 0;
-
+    let h = NODE_H;
+    let overlayTop = 0;
     if (n.isGroup) {
       const titleLines = wrapTextToLines(titleText, innerW, 12, 'bold');
       const descLines = wrapTextToLines(rawDesc, innerW, 10, 'normal');
       const titleH = Math.max(18, titleLines.length * 14);
       const descH = descLines.length > 0 ? descLines.length * 12 : 0;
-      const overlayTop = 10 + titleH + (descH ? 6 + descH : 0);
-      computedOverlayTop = overlayTop;
+      overlayTop = 10 + titleH + (descH ? 6 + descH : 0);
       const childTop = overlayTop + 16;
-
       const groupChildren = nodes.filter(c => c.parent === n.id).sort((a, b) => String(a.id).localeCompare(String(b.id)));
       let childrenTotalH = 0;
       groupChildren.forEach((c, idx) => {
         childrenTotalH += subnodeDims[c.id].h;
         if (idx < groupChildren.length - 1) childrenTotalH += childGap;
       });
-      computedH = Math.max(160, childTop + childrenTotalH + 24);
+      h = Math.max(160, childTop + childrenTotalH + 24);
     } else {
       const titleLines = wrapTextToLines(titleText, innerW, 13, 'bold');
       const descLines = wrapTextToLines(rawDesc, innerW, 11, 'normal');
       const gap = 12;
       const titleH = Math.max(18, titleLines.length * 16);
       const descH = descLines.length > 0 ? Math.max(12, descLines.length * 14) : 0;
-      computedH = Math.max(NODE_H, 20 + titleH + (descH ? gap + descH : 0) + 10);
+      h = Math.max(NODE_H, 20 + titleH + (descH ? gap + descH : 0) + 10);
     }
+    return { w, h, overlayTop };
+  }
 
-    const h = computedH;
-    positions[n.id] = { x, y: laneY[lane], w, h, overlayTop: computedOverlayTop };
+  // First pass: compute heights for all top nodes
+  const nodeDims = {};
+  ordered.forEach(n => { nodeDims[n.id] = computeNodeDims(n); });
+
+  // Compute data row height (tallest data node) so columns start below it
+  const dataNodes = ordered.filter(n => n.lane === 'data');
+  const dataRowH = dataNodes.length > 0
+    ? Math.max(...dataNodes.map(n => nodeDims[n.id].h))
+    : 0;
+  const COL_TOP = dataNodes.length > 0 ? DATA_TOP + dataRowH + rowGap : DATA_TOP;
+
+  // Place data nodes horizontally across the top, centered over the column area
+  const colLanes = ['input', 'processing', 'output', 'unknown'];
+  const colXValues = colLanes.map(l => colLaneX[l]);
+  const layoutLeft = Math.min(...colXValues);
+  const layoutRight = Math.max(...colXValues) + NODE_W;
+  const layoutWidth = layoutRight - layoutLeft;
+
+  if (dataNodes.length > 0) {
+    const totalDataW = dataNodes.reduce((sum, n) => sum + nodeDims[n.id].w, 0)
+      + DATA_NODE_GAP * (dataNodes.length - 1);
+    let dataX = layoutLeft + (layoutWidth - totalDataW) / 2;
+    dataNodes.forEach(n => {
+      const { w, h, overlayTop } = nodeDims[n.id];
+      positions[n.id] = { x: dataX, y: DATA_TOP, w, h, overlayTop };
+      dataX += w + DATA_NODE_GAP;
+    });
+  }
+
+  // Place column-lane nodes (input / processing / output / unknown) stacking vertically
+  const laneY = { input: COL_TOP, processing: COL_TOP, output: COL_TOP, unknown: COL_TOP };
+
+  ordered.filter(n => n.lane !== 'data').forEach(n => {
+    const lane = n.lane || 'unknown';
+    const level = levelMap[n.id] || 0;
+    // processing nodes offset slightly right per level to show depth, capped to avoid overlap
+    const maxOffset = (colLaneX['output'] - colLaneX['processing'] - GROUP_W - colGap);
+    const x = (colLaneX[lane] ?? colLaneX.unknown) + (lane === 'processing' ? Math.min(level * 30, Math.max(0, maxOffset)) : 0);
+    const { w, h, overlayTop } = nodeDims[n.id];
+    positions[n.id] = { x, y: laneY[lane], w, h, overlayTop };
     laneY[lane] += h + rowGap;
   });
 
