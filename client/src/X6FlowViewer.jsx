@@ -1,9 +1,9 @@
 import { useEffect, useRef, useImperativeHandle, forwardRef, useCallback } from 'react';
 import { Graph, Shape, Selection, Export } from '@antv/x6';
 
-const NODE_W = 220;
-const NODE_H = 76;
-const GROUP_W = 280;
+const NODE_W = 240;
+const NODE_H = 88;
+const GROUP_W = 300;
 
 const ROLE_THEME = {
   input: { fill: 'rgba(56,132,255,0.1)', stroke: '#3b82f6', text: '#2456b3', light: '#e8f1ff' },
@@ -213,10 +213,10 @@ function runRoleLayout(nodes, edges) {
   nodes.filter(n => n.parent).forEach(n => {
     const innerW = Math.max(10, NODE_W - 24);
     const rawDesc = String(n.desc || '').replace(/\s+/g, ' ').trim();
-    const titleLines = wrapTextToLines(n.label, innerW, 12, 'bold');
-    const descLines = wrapTextToLines(rawDesc, innerW, 10, 'normal');
+    const titleLines = wrapTextToLines(n.label, innerW, 14, 'bold');
+    const descLines = wrapTextToLines(rawDesc, innerW, 12, 'normal');
     const lines = descLines.length > 0 ? [...titleLines, ...descLines] : [...titleLines];
-    const dynH = Math.max(NODE_H, 18 + lines.length * 12);
+    const dynH = Math.max(NODE_H, 18 + lines.length * 14);
     subnodeDims[n.id] = { w: NODE_W, h: dynH };
   });
 
@@ -229,10 +229,10 @@ function runRoleLayout(nodes, edges) {
     let h = NODE_H;
     let overlayTop = 0;
     if (n.isGroup) {
-      const titleLines = wrapTextToLines(titleText, innerW, 12, 'bold');
-      const descLines = wrapTextToLines(rawDesc, innerW, 10, 'normal');
-      const titleH = Math.max(18, titleLines.length * 14);
-      const descH = descLines.length > 0 ? descLines.length * 12 : 0;
+      const titleLines = wrapTextToLines(titleText, innerW, 14, 'bold');
+      const descLines = wrapTextToLines(rawDesc, innerW, 12, 'normal');
+      const titleH = Math.max(20, titleLines.length * 16);
+      const descH = descLines.length > 0 ? descLines.length * 14 : 0;
       overlayTop = 10 + titleH + (descH ? 6 + descH : 0);
       const childTop = overlayTop + 16;
       const groupChildren = nodes.filter(c => c.parent === n.id).sort((a, b) => String(a.id).localeCompare(String(b.id)));
@@ -243,11 +243,11 @@ function runRoleLayout(nodes, edges) {
       });
       h = Math.max(160, childTop + childrenTotalH + 24);
     } else {
-      const titleLines = wrapTextToLines(titleText, innerW, 13, 'bold');
-      const descLines = wrapTextToLines(rawDesc, innerW, 11, 'normal');
+      const titleLines = wrapTextToLines(titleText, innerW, 15, 'bold');
+      const descLines = wrapTextToLines(rawDesc, innerW, 13, 'normal');
       const gap = 12;
-      const titleH = Math.max(18, titleLines.length * 16);
-      const descH = descLines.length > 0 ? Math.max(12, descLines.length * 14) : 0;
+      const titleH = Math.max(20, titleLines.length * 18);
+      const descH = descLines.length > 0 ? Math.max(14, descLines.length * 16) : 0;
       h = Math.max(NODE_H, 20 + titleH + (descH ? gap + descH : 0) + 10);
     }
     return { w, h, overlayTop };
@@ -633,18 +633,18 @@ function renderGraph(graph, nodeDetails) {
     const iconText = icons.join(' ');
     const titleText = n.label;
     const innerW = Math.max(10, pos.w - 24);
-    const titleLines = wrapTextToLines(titleText, innerW, 12, 'bold');
+    const titleLines = wrapTextToLines(titleText, innerW, 14, 'bold');
     const rawDesc = (n.desc || '').replace(/\s+/g, ' ').trim();
-    const descLines = wrapTextToLines(rawDesc, innerW, 10, 'normal');
-    const titleH = Math.max(18, titleLines.length * 14);
-    const descH = descLines.length > 0 ? descLines.length * 12 : 0;
+    const descLines = wrapTextToLines(rawDesc, innerW, 12, 'normal');
+    const titleH = Math.max(20, titleLines.length * 16);
+    const descH = descLines.length > 0 ? descLines.length * 14 : 0;
     const overlayTop = 10 + titleH + (descH ? 6 + descH : 0);
     overlayTopMap[n.id] = overlayTop;
     const group = graph.addNode({
       id: n.id, shape: 'rect', x: pos.x, y: pos.y, width: pos.w, height: pos.h, zIndex: 0,
       attrs: {
         body: { fill: theme.fill, stroke: theme.stroke, strokeWidth: 2.2, strokeDasharray: '6 3', rx: 10, ry: 10 },
-        label: { text: '', fontSize: 12, fontWeight: 'bold', fill: theme.text, refX: 0.5, refY: 0.5, textAnchor: 'middle', textVerticalAnchor: 'middle' },
+        label: { text: '', fontSize: 14, fontWeight: 'bold', fill: theme.text, refX: 0.5, refY: 0.5, textAnchor: 'middle', textVerticalAnchor: 'middle' },
       },
       ports: portsDef(n.id, n.lane),
     });
@@ -659,7 +659,7 @@ function renderGraph(graph, nodeDetails) {
       zIndex: 5,
       attrs: {
         body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-        label: { text: titleLines.join('\n'), fontSize: 12, fontWeight: 'bold', fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
+        label: { text: titleLines.join('\n'), fontSize: 14, fontWeight: 'bold', fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
       },
       ports: { groups: {}, items: [] },
     });
@@ -673,7 +673,7 @@ function renderGraph(graph, nodeDetails) {
       zIndex: 6,
       attrs: {
         body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-        label: { text: iconText, fontSize: 18, fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5, pointerEvents: 'none' },
+        label: { text: iconText, fontSize: 20, fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5, pointerEvents: 'none' },
       },
       ports: { groups: {}, items: [] },
     }) : null;
@@ -683,11 +683,11 @@ function renderGraph(graph, nodeDetails) {
       x: pos.x + 12,
       y: pos.y + 10 + titleH + 6,
       width: innerW,
-      height: descH || 12,
+      height: descH || 14,
       zIndex: 5,
       attrs: {
         body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-        label: { text: descLines.join('\n'), fontSize: 10, fill: '#666', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
+        label: { text: descLines.join('\n'), fontSize: 12, fill: '#666', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
       },
       ports: { groups: {}, items: [] },
     });
@@ -709,11 +709,11 @@ function renderGraph(graph, nodeDetails) {
       const titleText = n.label;
       const innerW = Math.max(10, pos.w - 24);
       const rawDesc = (n.desc || '').replace(/\s+/g, ' ').trim();
-      const titleLines = wrapTextToLines(titleText, innerW, 13, 'bold');
-      const descLines = wrapTextToLines(rawDesc, innerW, 11, 'normal');
+      const titleLines = wrapTextToLines(titleText, innerW, 15, 'bold');
+      const descLines = wrapTextToLines(rawDesc, innerW, 13, 'normal');
       const gap = 12;
-      const titleH = Math.max(18, titleLines.length * 16);
-      const descH = descLines.length > 0 ? Math.max(12, descLines.length * 14) : 0;
+      const titleH = Math.max(20, titleLines.length * 18);
+      const descH = descLines.length > 0 ? Math.max(14, descLines.length * 16) : 0;
       const dynH = Math.max(pos.h, 20 + titleH + (descH ? gap + descH : 0) + 10);
       const group = graph.addNode({
         id: n.id,
@@ -725,7 +725,7 @@ function renderGraph(graph, nodeDetails) {
         zIndex: 1,
         attrs: {
           body: { fill: theme.fill, stroke: theme.stroke, strokeWidth: 2.2, strokeDasharray: '6 3', rx: 10, ry: 10 },
-          label: { text: '', fontSize: 12, fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5 },
+          label: { text: '', fontSize: 15, fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5 },
         },
         ports: portsDef(n.id, n.lane),
       });
@@ -741,7 +741,7 @@ function renderGraph(graph, nodeDetails) {
         zIndex: 5,
         attrs: {
           body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-          label: { text: titleLines.join('\n'), fontSize: 13, fontWeight: 'bold', fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
+          label: { text: titleLines.join('\n'), fontSize: 15, fontWeight: 'bold', fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
         },
         ports: { groups: {}, items: [] },
       });
@@ -755,7 +755,7 @@ function renderGraph(graph, nodeDetails) {
         zIndex: 6,
         attrs: {
           body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-          label: { text: iconText, fontSize: 19, fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5, pointerEvents: 'none' },
+          label: { text: iconText, fontSize: 21, fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5, pointerEvents: 'none' },
         },
         ports: { groups: {}, items: [] },
       }) : null;
@@ -765,11 +765,11 @@ function renderGraph(graph, nodeDetails) {
         x: pos.x + 12,
         y: pos.y + oy + 12 + titleH + gap,
         width: innerW,
-        height: descH || 12,
+        height: descH || 14,
         zIndex: 5,
         attrs: {
           body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-          label: { text: descLines.join('\n'), fontSize: 11, fill: '#666', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
+          label: { text: descLines.join('\n'), fontSize: 13, fill: '#666', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
         },
         ports: { groups: {}, items: [] },
       });
@@ -779,11 +779,11 @@ function renderGraph(graph, nodeDetails) {
     } else {
       const innerW = Math.max(10, pos.w - 24);
       const rawDesc = (n.desc || '').replace(/\s+/g, ' ').trim();
-      const titleLines = wrapTextToLines(n.label, innerW, 12, 'bold');
-      const descLines = wrapTextToLines(rawDesc, innerW, 10, 'normal');
+      const titleLines = wrapTextToLines(n.label, innerW, 14, 'bold');
+      const descLines = wrapTextToLines(rawDesc, innerW, 12, 'normal');
       const lines = descLines.length > 0 ? [...titleLines, ...descLines] : [...titleLines];
       const labelText = lines.join('\n');
-      const dynH = Math.max(pos.h, 18 + lines.length * 12);
+      const dynH = Math.max(pos.h, 18 + lines.length * 14);
       const added = graph.addNode({
         id: n.id,
         shape: 'rect',
@@ -794,7 +794,7 @@ function renderGraph(graph, nodeDetails) {
         zIndex: 1,
         attrs: {
           body: { fill: theme.light, stroke: theme.stroke, strokeWidth: 1.6 + (n.importance || 0) * 0.9, rx: 6, ry: 6 },
-          label: { text: labelText, fontSize: 11, fill: '#333', textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5 },
+          label: { text: labelText, fontSize: 13, fill: '#333', textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5 },
         },
         ports: portsDef(n.id, n.lane),
       });
@@ -816,28 +816,63 @@ function renderGraph(graph, nodeDetails) {
     }
   });
 
-  // Edges
-  const edgeLabelOffsets = [0, 16, -16, 28, -28, 40, -40];
-  parsedEdges.forEach((e, idx) => {
-    const labelOffset = edgeLabelOffsets[idx % edgeLabelOffsets.length];
+  // Edges — track parallel edges between the same node pair to offset them apart
+  const pairCount = {};
+  const pairIndex = {};
+  parsedEdges.forEach(e => {
+    const key = `${e.source}||${e.target}`;
+    pairCount[key] = (pairCount[key] || 0) + 1;
+  });
+  parsedEdges.forEach((e) => {
+    const key = `${e.source}||${e.target}`;
+    const total = pairCount[key] || 1;
+    const pi = pairIndex[key] || 0;
+    pairIndex[key] = pi + 1;
+    // Spread parallel edges: offsets like 0, -20, 20, -40, 40 …
+    const spreadStep = 22;
+    const parallelOffset = total === 1 ? 0 : (pi - (total - 1) / 2) * spreadStep;
+
     const labels = e.label
       ? [{
         attrs: {
-          label: { text: e.label, fontSize: 11, fontWeight: 600, fill: '#475569' },
+          label: {
+            text: e.label,
+            fontSize: 11,
+            fontWeight: 600,
+            fill: '#334155',
+          },
+          rect: {
+            fill: '#ffffff',
+            stroke: '#cbd5e1',
+            strokeWidth: 1,
+            rx: 3,
+            ry: 3,
+            refWidth: 6,
+            refHeight: 4,
+            refX: -3,
+            refY: -2,
+          },
         },
-        position: { distance: 0.5, offset: labelOffset },
+        position: { distance: 0.5, offset: parallelOffset },
       }]
       : [];
     graph.addEdge({
       id: e.id, source: e.source, target: e.target, dashed: e.dashed, zIndex: 2,
-      router: { name: 'orth' },
-      connector: { name: 'rounded', args: { radius: 12 } },
+      router: {
+        name: 'manhattan',
+        args: {
+          padding: { top: 24, bottom: 24, left: 24, right: 24 },
+          startDirections: ['top', 'bottom', 'left', 'right'],
+          endDirections: ['top', 'bottom', 'left', 'right'],
+        },
+      },
+      connector: { name: 'rounded', args: { radius: 10 } },
       attrs: {
         line: {
-          stroke: e.dashed ? '#9aa7b8' : '#7b8ea6',
-          strokeWidth: e.dashed ? 1.35 : 1.55,
+          stroke: e.dashed ? '#94a3b8' : '#64748b',
+          strokeWidth: e.dashed ? 1.3 : 1.6,
           strokeDasharray: e.dashed ? '7 5' : '0',
-          targetMarker: { name: 'block', size: 8, fill: e.dashed ? '#9aa7b8' : '#7b8ea6' },
+          targetMarker: { name: 'block', size: 7, fill: e.dashed ? '#94a3b8' : '#64748b' },
         },
       },
       labels,
@@ -931,17 +966,17 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
       const innerW = Math.max(10, pb.width - 24);
       const titleRaw = String(hdr.attr('label/text') || hdr.getProp('label') || '').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
       const descRaw = String(sub.attr('label/text') || sub.getProp('label') || '').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
-      const titleLines = wrapTextToLines(titleRaw, innerW, 12, 'bold');
-      const descLines = wrapTextToLines(descRaw, innerW, 10, 'normal');
-      const titleH = Math.max(18, titleLines.length * 14);
-      const descH = descLines.length > 0 ? descLines.length * 12 : 0;
+      const titleLines = wrapTextToLines(titleRaw, innerW, 14, 'bold');
+      const descLines = wrapTextToLines(descRaw, innerW, 12, 'normal');
+      const titleH = Math.max(20, titleLines.length * 16);
+      const descH = descLines.length > 0 ? descLines.length * 14 : 0;
       const overlayTop = 10 + titleH + (descH ? 6 + descH : 0);
       hdr.position(pb.x + 12, pb.y + 10);
       hdr.resize(innerW, titleH);
       hdr.attr('label/text', titleLines.join('\n'));
       if (ico) ico.position(pb.x + pb.width - 38, pb.y + 8);
       sub.position(pb.x + 12, pb.y + 10 + titleH + 6);
-      sub.resize(innerW, descH || 12);
+      sub.resize(innerW, descH || 14);
       sub.attr('label/text', descLines.join('\n'));
       try { parentNode.setData && parentNode.setData({ ...data, overlayTop }); } catch (e) { void e; }
       const minH = overlayTop + 80;
@@ -1018,8 +1053,8 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
               });
             }
             const rawDesc = origNode ? (origNode.brief_description || origNode.desc || '') : '';
-            const titleLines = wrapTextToLines(newName, innerW, 12, 'bold');
-            const descLines = wrapTextToLines(rawDesc.replace(/\s+/g, ' ').trim(), innerW, 10, 'normal');
+            const titleLines = wrapTextToLines(newName, innerW, 14, 'bold');
+            const descLines = wrapTextToLines(rawDesc.replace(/\s+/g, ' ').trim(), innerW, 12, 'normal');
             dynText = descLines.length > 0 ? [...titleLines, ...descLines].join('\n') : titleLines.join('\n');
           } catch (e) { void e; }
           baseNode.attr('label/text', dynText);
@@ -1270,11 +1305,11 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
     const width = 240;
     const baseBodyH = 80;
     const innerW = Math.max(10, width - 24);
-    const titleLines = wrapTextToLines(name.trim(), innerW, 13, 'bold');
-    const descLines = wrapTextToLines((brief || '').trim(), innerW, 11, 'normal');
+    const titleLines = wrapTextToLines(name.trim(), innerW, 15, 'bold');
+    const descLines = wrapTextToLines((brief || '').trim(), innerW, 13, 'normal');
     const gap = 12;
-    const titleH = Math.max(18, titleLines.length * 16);
-    const descH = descLines.length > 0 ? Math.max(12, descLines.length * 14) : 0;
+    const titleH = Math.max(20, titleLines.length * 18);
+    const descH = descLines.length > 0 ? Math.max(14, descLines.length * 16) : 0;
     const overlayTop = 12 + titleH + (descH ? gap + descH : 0);
     const height = baseBodyH + overlayTop;
     const group = graph.addNode({
@@ -1285,7 +1320,7 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
       zIndex: 1,
       attrs: {
         body: { fill: 'rgba(33,124,243,0.05)', stroke: '#217cf3', strokeWidth: 2, strokeDasharray: '6 3', rx: 8, ry: 8 },
-        label: { text: '', fontSize: 12, fill: '#217cf3', textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5 },
+        label: { text: '', fontSize: 15, fill: '#217cf3', textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5 },
       },
       ports: {
         groups: {
@@ -1311,7 +1346,7 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
       zIndex: 5,
       attrs: {
         body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-        label: { text: titleLines.join('\n'), fontSize: 13, fontWeight: 'bold', fill: '#217cf3', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
+        label: { text: titleLines.join('\n'), fontSize: 15, fontWeight: 'bold', fill: '#217cf3', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
       },
       ports: { groups: {}, items: [] },
     });
@@ -1321,11 +1356,11 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
       x: x + 12,
       y: y + 12 + titleH + gap,
       width: innerW,
-      height: descH || 12,
+      height: descH || 14,
       zIndex: 5,
       attrs: {
         body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-        label: { text: descLines.join('\n'), fontSize: 11, fill: '#666', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
+        label: { text: descLines.join('\n'), fontSize: 13, fill: '#666', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
       },
       ports: { groups: {}, items: [] },
     });
@@ -1430,7 +1465,7 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
       width: NODE_W, height: NODE_H,
       attrs: {
         body: { fill: '#ffffff', stroke: '#666', strokeWidth: 1.5, rx: 4, ry: 4 },
-        label: { text: name.trim(), fontSize: 12, fill: '#333', textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5 },
+        label: { text: name.trim(), fontSize: 14, fill: '#333', textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5 },
       },
       ports: {
         groups: {

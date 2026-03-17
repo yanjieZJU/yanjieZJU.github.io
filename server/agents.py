@@ -497,53 +497,53 @@ class RetrieverAgent:
 
         return structural_hints
     
-    def rerank_with_llm(self, query, retrieved_skeletons):
-        if not retrieved_skeletons: return []
-        candidates_text = ""
-        for i, node in enumerate(retrieved_skeletons):
-            content_preview = node.node.text[:500].replace("\n", " ")
-            candidates_text += f"--- Candidate {i} ---\n {content_preview}\n\n"
-        prompt = f"""
-        ##TASK:
-        Identify the SINGLE candidate from the list below that BEST matches the user's specific requirements.
+    # def rerank_with_llm(self, query, retrieved_skeletons):
+    #     if not retrieved_skeletons: return []
+    #     candidates_text = ""
+    #     for i, node in enumerate(retrieved_skeletons):
+    #         content_preview = node.node.text[:500].replace("\n", " ")
+    #         candidates_text += f"--- Candidate {i} ---\n {content_preview}\n\n"
+    #     prompt = f"""
+    #     ##TASK:
+    #     Identify the SINGLE candidate from the list below that BEST matches the user's specific requirements.
 
-        ##CRITERIA:
-        1. The candidate must be the most relevant to the user's requirements.
-        2. The candidate must be the most complete to include the specific nodes mentioned in the user's query.
+    #     ##CRITERIA:
+    #     1. The candidate must be the most relevant to the user's requirements.
+    #     2. The candidate must be the most complete to include the specific nodes mentioned in the user's query.
 
-        ##Candidates:
-        {candidates_text}
+    #     ##Candidates:
+    #     {candidates_text}
 
-        ##User Query:
-        {query}
+    #     ##User Query:
+    #     {query}
 
-        ##Output Format:
-        Return the top 3 indices of the best candidates in order of preference (e.g., "1, 2, 0").
+    #     ##Output Format:
+    #     Return the top 3 indices of the best candidates in order of preference (e.g., "1, 2, 0").
 
-        """
-        try:
-            response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0,
-            ).choices[0].message.content
-            indices = [int(x.strip()) for x in response.split(",") if x.strip().isdigit()]
-            valid_skeletons = []
-            for i in indices:
-                if 0 <= i < len(retrieved_skeletons):
-                    valid_skeletons.append(retrieved_skeletons[i])
+    #     """
+    #     try:
+    #         response = self.client.chat.completions.create(
+    #             model="gpt-4o-mini",
+    #             messages=[{"role": "user", "content": prompt}],
+    #             temperature=0,
+    #         ).choices[0].message.content
+    #         indices = [int(x.strip()) for x in response.split(",") if x.strip().isdigit()]
+    #         valid_skeletons = []
+    #         for i in indices:
+    #             if 0 <= i < len(retrieved_skeletons):
+    #                 valid_skeletons.append(retrieved_skeletons[i])
 
-            if len(valid_skeletons) < 3:
-                remaining_indices = [idx for idx in range(len(retrieved_skeletons)) if idx not in indices]
-                for idx in remaining_indices:
-                    if len(valid_skeletons) < 3:
-                        valid_skeletons.append(retrieved_skeletons[idx])
+    #         if len(valid_skeletons) < 3:
+    #             remaining_indices = [idx for idx in range(len(retrieved_skeletons)) if idx not in indices]
+    #             for idx in remaining_indices:
+    #                 if len(valid_skeletons) < 3:
+    #                     valid_skeletons.append(retrieved_skeletons[idx])
 
-            return valid_skeletons
+    #         return valid_skeletons
             
-        except Exception as e:
-            print(f"Error: {e}")
-            return None
+    #     except Exception as e:
+    #         print(f"Error: {e}")
+    #         return None
 
 
 class IntegratorAgent:
@@ -952,6 +952,27 @@ class EditorAgent:
                         "required": ["query"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "retrieve_topology",
+                    "description": "Retrieve structural connection paths between two modules from the knowledge graph. Use this when you need to understand how two components are typically connected in literature, or when you are adding/reconnecting a module and need to know its upstream/downstream neighbors.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "source": {
+                                "type": "string",
+                                "description": "Name or description of the source module."
+                            },
+                            "target": {
+                                "type": "string",
+                                "description": "Name or description of the target module."
+                            }
+                        },
+                        "required": ["source", "target"]
+                    }
+                }
             }
         ]
 
@@ -976,9 +997,10 @@ class EditorAgent:
         You are an expert System Architect. You are collaborating with a user to modify a system architecture design.
         
         ## Your Capabilities
-        1. **Analyze**: Understand the user's intent and the current architecture. 
-        2. **Retrieve**: If the user asks for something that need specific knowledge or technical details (e.g., "Add a Kafka stream", "Use a Transformer model"), use the `retrieve_knowledge` tool to get technical details.
-        3. **Modify**: Update the architecture JSON to reflect the changes.
+        1. **Analyze**: Understand the user's intent and the current architecture.
+        2. **Retrieve Knowledge**: If the user asks for something that needs specific knowledge or technical details (e.g., "Add a Kafka stream", "Use a Transformer model"), use the `retrieve_knowledge` tool to get technical details.
+        3. **Retrieve Topology**: If you are adding, reconnecting, or repositioning a module and need to know how it typically connects to other components in literature, use the `retrieve_topology` tool with the source and target module names. This returns validated structural paths from the knowledge graph.
+        4. **Modify**: Update the architecture JSON to reflect the changes.
         
         ## Evolution Context
         This is the current state of the plan. Here is the history of how it evolved:
@@ -991,7 +1013,8 @@ class EditorAgent:
         The user has provided an instruction. You must:
         1. Analyze the instruction in context of the history (avoid repeating undone changes, or building on top of recent changes).
         2. If you need external knowledge (e.g., technical specs, similar modules), call `retrieve_knowledge`.
-        3. Decide the response mode:
+        3. If you are adding or reconnecting a module and need to know its typical upstream/downstream neighbors, call `retrieve_topology` with the relevant source and target names to get literature-validated connection paths.
+        4. Decide the response mode:
            - plan_update: update the architecture JSON
            - direct_answer: answer the user without changing the plan
            - evidence_answer: answer with evidence and citations without changing the plan
@@ -1095,13 +1118,13 @@ class EditorAgent:
                             args = json.loads(tool_call.function.arguments)
                             query = args.get("query")
                             print(f"🔍 Editor calling tool: retrieve_knowledge('{query}')")
-                            
+
                             # Execute retrieval using the passed retriever instance
                             # We'll use a simplified retrieval wrapper here
                             # Create fake anchors for the retriever
                             search_anchors = [{"user_term": query, "description": "User requested enhancement"}]
                             retrieved_map = retriever.retrieve_for_module(search_anchors, top_k=3, include_topology=True)
-                            
+
                             # Format results
                             context_text = f"### Retrieval Results for '{query}':\n"
                             found_any = False
@@ -1114,14 +1137,66 @@ class EditorAgent:
                                     context_text += f"- Title: {title}\n"
                                     context_text += f"  Snippet: {snippet}...\n"
                                     context_text += f"  Source: {source}\n"
-                            
+
                             if not found_any:
                                 context_text += "No relevant modules found."
-                                
+
                             messages.append({
                                 "tool_call_id": tool_call.id,
                                 "role": "tool",
                                 "name": "retrieve_knowledge",
+                                "content": context_text
+                            })
+
+                        elif tool_call.function.name == "retrieve_topology":
+                            args = json.loads(tool_call.function.arguments)
+                            source = args.get("source")
+                            target = args.get("target")
+                            print(f"🔍 Editor calling tool: retrieve_topology('{source}' -> '{target}')")
+
+                            # Execute structural path retrieval
+                            user_relations = [{"source": source, "target": target, "type": "FLOWS_TO"}]
+                            structural_paths = retriever.retrieve_structure_paths(user_relations)
+
+                            # Format results similar to IntegratorAgent.format_hints
+                            context_text = f"### Structural Paths for '{source}' -> '{target}':\n"
+                            if structural_paths:
+                                for i, path in enumerate(structural_paths):
+                                    nodes = path.get('path_nodes', [])
+                                    rels = path.get('relations', [])
+                                    rel_props = path.get('rel_props', [])
+
+                                    chain_desc = []
+                                    if nodes:
+                                        start_node_name = nodes[0].get('name', 'Unknown')
+                                        chain_desc.append(f"[{start_node_name}]")
+
+                                        for j, rel in enumerate(rels):
+                                            if j + 1 < len(nodes):
+                                                target_node = nodes[j+1].get('name', 'Unknown')
+                                                func = nodes[j+1].get('function', '')
+                                                if func:
+                                                    target_node += f" ({func[:100]}...)"
+
+                                                data_content = ""
+                                                if j < len(rel_props) and rel_props[j] and 'edge_label' in rel_props[j]:
+                                                    lbl = rel_props[j]['edge_label']
+                                                    if lbl and lbl != "null":
+                                                        data_content = f": {lbl}"
+
+                                                if rel == "FLOWS_TO":
+                                                    chain_desc.append(f" --({data_content})--> [{target_node}]")
+                                                else:
+                                                    chain_desc.append(f" --({rel}{data_content})--> [{target_node}]")
+
+                                    context_text += f"  Path {i+1}: {''.join(chain_desc)}\n"
+                            else:
+                                context_text += "No structural paths found in literature. You may need to infer the connection based on domain knowledge."
+
+                            messages.append({
+                                "tool_call_id": tool_call.id,
+                                "role": "tool",
+                                "name": "retrieve_topology",
                                 "content": context_text
                             })
                     
@@ -1135,25 +1210,27 @@ class EditorAgent:
                     # Try direct JSON parsing
                     try:
                         result = json.loads(content)
-                        return result
+                        return self._reflect(result, current_plan, user_instruction)
                     except json.JSONDecodeError:
                         print(f"Failed to parse JSON directly. Attempting regex extraction...")
                         # Fallback: extract JSON from markdown code blocks
                         json_match = re.search(r'```(?:json)?\s*(.*?)\s*```', content, re.DOTALL)
                         if json_match:
                             try:
-                                return json.loads(json_match.group(1))
+                                result = json.loads(json_match.group(1))
+                                return self._reflect(result, current_plan, user_instruction)
                             except json.JSONDecodeError:
                                 pass
-                        
+
                         # Fallback: extract outermost JSON object
                         json_match = re.search(r'(\{.*\})', content, re.DOTALL)
                         if json_match:
                             try:
-                                return json.loads(json_match.group(1))
+                                result = json.loads(json_match.group(1))
+                                return self._reflect(result, current_plan, user_instruction)
                             except json.JSONDecodeError:
                                 pass
-                        
+
                         print(f"Error parsing final JSON even after extraction. Retrying...")
                         # Append a user message asking to fix the JSON format
                         messages.append({"role": "assistant", "content": content})
@@ -1167,8 +1244,105 @@ class EditorAgent:
             except Exception as e:
                 print(f"Error in edit_plan loop: {e}")
                 break
-                
+
         return None
+
+    def _reflect(self, result, original_plan, user_instruction):
+        """
+        Post-edit reflection: if the editor produced a plan_update, check whether
+        any nodes from the original plan were silently dropped without justification.
+        If so, ask the LLM to restore them while keeping the editor's changes intact.
+        Returns the (possibly corrected) result dict.
+        """
+        # Only apply to plan_update responses
+        if not isinstance(result, dict) or result.get("output_type") != "plan_update":
+            return result
+
+        revised_plan = result.get("revised_plan")
+        if not revised_plan:
+            return result
+
+        def get_module_names(plan):
+            if not isinstance(plan, dict):
+                return set()
+            md = plan.get("module_details", [])
+            if isinstance(md, list):
+                return {m.get("name", "") for m in md if m.get("name")}
+            if isinstance(md, dict):
+                return set(md.keys())
+            return set()
+
+        orig_names    = get_module_names(original_plan if isinstance(original_plan, dict) else {})
+        revised_names = get_module_names(revised_plan)
+        dropped       = orig_names - revised_names
+
+        if not dropped:
+            print("✅ Reflection: No nodes were silently dropped.")
+            return result
+
+        print(f"⚠️  Reflection: {len(dropped)} node(s) missing from revised plan: {dropped}")
+
+        # Build lookup for original module entries
+        orig_md = (original_plan if isinstance(original_plan, dict) else {}).get("module_details", [])
+        if isinstance(orig_md, list):
+            orig_lookup = {m.get("name", ""): m for m in orig_md}
+        else:
+            orig_lookup = dict(orig_md)
+
+        prompt = f"""You are a careful architecture reviewer. An EditorAgent just modified a system architecture.
+Your job is to decide which dropped nodes should be RESTORED and which were legitimately removed.
+
+## User Instruction
+{user_instruction}
+
+## Nodes present in the original plan but MISSING from the revised plan
+{json.dumps(list(dropped), ensure_ascii=False, indent=2)}
+
+## Original definitions of those nodes
+{json.dumps({n: orig_lookup.get(n, {}) for n in dropped}, ensure_ascii=False, indent=2)}
+
+## Revised plan (editor output)
+{json.dumps(revised_plan, ensure_ascii=False, indent=2)}
+
+## Rules
+1. RESTORE a node if:
+   - The user instruction did NOT ask to remove it.
+   - It is not functionally duplicated by a new/renamed node in the revised plan.
+   - Removing it breaks connectivity or completeness of the architecture.
+2. LEAVE OUT a node if:
+   - The user explicitly asked to remove it.
+   - It is clearly superseded by a renamed or restructured node in the revised plan.
+   - It was isolated or redundant.
+
+## Output (strict JSON, no markdown)
+Return the corrected full revised plan. If you restore nodes, re-integrate their ports
+so the graph stays connected. Keep all editor changes intact.
+
+{{
+  "restored_nodes": ["list of node names you are restoring, empty list if none"],
+  "rationale": "brief explanation",
+  "revised_plan": {{ ...full corrected plan with overall_description and module_details... }}
+}}"""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+            )
+            reflection_result = json.loads(response.choices[0].message.content)
+            restored = reflection_result.get("restored_nodes", [])
+            corrected_plan = reflection_result.get("revised_plan")
+            if restored:
+                print(f"✅ Reflection: Restored {restored}. Reason: {reflection_result.get('rationale', '')}")
+            else:
+                print("✅ Reflection: All dropped nodes were legitimately removed.")
+            if corrected_plan:
+                result["revised_plan"] = corrected_plan
+        except Exception as e:
+            print(f"⚠️  Reflection call failed ({e}), keeping editor output unchanged.")
+
+        return result
 
 
 class ConflictSolver:

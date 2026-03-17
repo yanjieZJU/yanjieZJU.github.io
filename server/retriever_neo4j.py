@@ -53,6 +53,9 @@ def load_stores():
         username=NEO4J_USERNAME,
         password=NEO4J_PASSWORD,
         url=NEO4J_URL,
+        liveness_check_timeout=15,
+        max_connection_lifetime=25,
+        connection_acquisition_timeout=30,
     )
     try:
         vector_store = SimpleVectorStore.from_persist_dir(persist_dir=STORAGE_DIR)

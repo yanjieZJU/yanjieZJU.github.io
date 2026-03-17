@@ -36,3 +36,4 @@ server/diamaid.db
 data/
 server/data/
 server/graph_storage/
+server/rag_storage/
