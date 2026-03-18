@@ -4,6 +4,8 @@ import os
 os.environ["OPENAI_API_KEY"] = "sk-y44HwiOqlzdvdMwiVGmyzpITjGQdkwWS0bJuDMWN2awpHnX7" 
 os.environ["OPENAI_BASE_URL"] = "https://poloai.top/v1"
 
+os.environ["DASHSCOPE_API_KEY"] = "sk-8d86e8ae17e04f6aacff4a43cfae481a"
+
 # === Neo4j Configuration ===
 NEO4J_USERNAME = "neo4j"
 NEO4J_PASSWORD = "BQLjYc4gOpIxTi6o5c-es481vKejEHHBGuxJeEvX9hg"
