@@ -1031,6 +1031,18 @@ function App() {
 
   return (
     <div className="app-container">
+      <div style={{ position: 'fixed', top: 8, right: 16, zIndex: 9999 }}>
+        <a
+          href="#/chat"
+          style={{
+            fontSize: '0.82rem', fontWeight: 500, color: '#217cf3',
+            background: '#e8f0fe', padding: '4px 12px', borderRadius: 6,
+            textDecoration: 'none', border: '1px solid #c5d8fb',
+          }}
+        >
+          💬 LLM Chat
+        </a>
+      </div>
 
       <main className="main-content">
         <div className="generator-layout" style={viewMode === 'result' ? { gridTemplateColumns: '320px 1fr' } : {}}>

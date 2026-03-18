@@ -1,5 +1,6 @@
 import os
 import json
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
@@ -9,14 +10,40 @@ import uvicorn
 from pipeline_runner import run_pipeline, run_edit_pipeline # Updated Import
 import sys
 import hashlib
+import httpx
 from datetime import datetime
 # Add parent directory to path for config import
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import *
 from session_manager import SESSIONS_DIR, create_modified_plan, get_session_tree
 from exporter import export_to_docx
+from retriever_neo4j import get_global_stores
+from retriever_rag import get_rag_store, rag_retrieve
 
-app = FastAPI()
+import threading
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("Server starting — pre-loading knowledge stores...")
+    try:
+        get_global_stores()
+        print("Knowledge graph stores ready.")
+    except Exception as e:
+        print(f"Failed to pre-load knowledge graph stores: {e}")
+
+    # RAG index build can take 30-60 min on first run — run in background thread
+    def _init_rag():
+        try:
+            get_rag_store()
+            print("RAG vector store ready.")
+        except Exception as e:
+            print(f"Failed to initialize RAG store: {e}")
+
+    threading.Thread(target=_init_rag, daemon=True, name="rag-init").start()
+    print("RAG index initializing in background — server ready.")
+    yield
+
+app = FastAPI(lifespan=lifespan)
 
 # --- CORS Setting ---
 origins = [
@@ -36,7 +63,12 @@ app.add_middleware(
 )
 
 # --- LLM Client Setting ---
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), base_url=os.getenv("OPENAI_BASE_URL"))
+http_client = httpx.Client(proxy=None, trust_env=False)
+client = OpenAI(
+    http_client=http_client,
+    api_key=os.environ.get("OPENAI_API_KEY"),
+    base_url=os.environ.get("OPENAI_BASE_URL")
+    )
 
 from typing import Optional, Union # Add Optional and Union
 
@@ -224,6 +256,221 @@ async def export_document(req: ExportRequest):
     except Exception as e:
         print(f"Error exporting Docx: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ─────────────────────────────────────────────
+# Chat endpoints (pure LLM conversation page)
+# ─────────────────────────────────────────────
+
+class ChatMessage(BaseModel):
+    role: str   # "user" | "assistant"
+    content: Union[str, list]  # str for text, list for vision (image_url blocks)
+
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage]   # full history
+    session_id: Optional[str] = None
+
+class ImageRequest(BaseModel):
+    prompt: str
+    history: list[ChatMessage] = []  # prior text turns for context
+    session_id: Optional[str] = None
+
+# RAG tool definition for function calling
+_RAG_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "search_papers",
+        "description": (
+            "Search the academic paper knowledge base for relevant information. "
+            "Use this when the user asks about research topics, system design, "
+            "methodologies, or any question that may benefit from literature references."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query to look up in the paper knowledge base.",
+                }
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+def _format_rag_results(chunks: list[dict]) -> str:
+    """Format retrieved chunks into a readable tool result string."""
+    if not chunks:
+        return "No relevant papers found."
+    parts = []
+    for i, c in enumerate(chunks, 1):
+        source = c.get("source", "unknown")
+        section = c.get("section", "")
+        text = c.get("text", "")
+        header = f"[{i}] {source}"
+        if section:
+            header += f" — {section}"
+        parts.append(f"{header}\n{text}")
+    return "\n\n---\n\n".join(parts)
+
+
+@app.post("/chat")
+async def chat_text(req: ChatRequest):
+    """
+    Streaming text chat with RAG tool calling (baseline).
+    The LLM can invoke search_papers to retrieve relevant paper chunks via
+    hybrid BM25 + dense retrieval with RRF fusion and query expansion.
+    """
+    msgs = [{"role": m.role, "content": m.content} for m in req.messages]
+
+    def stream():
+        try:
+            # ── Step 1: first call with tools available ──────────────────────
+            first_resp = client.chat.completions.create(
+                model="gpt-5.2-chat-latest",
+                messages=msgs,
+                tools=[_RAG_TOOL],
+                tool_choice="auto",
+                stream=False,
+            )
+            choice = first_resp.choices[0]
+
+            # ── Step 2: if LLM wants to call the tool, execute it ────────────
+            if choice.finish_reason == "tool_calls" and choice.message.tool_calls:
+                tool_call = choice.message.tool_calls[0]
+                try:
+                    args = json.loads(tool_call.function.arguments)
+                    query = args.get("query", "")
+                except Exception:
+                    query = ""
+
+                yield json.dumps({"type": "tool_call", "query": query}) + "\n"
+
+                from retriever_rag import _RAG_VECTOR_STORE
+                if query and _RAG_VECTOR_STORE is not None:
+                    chunks = rag_retrieve(query)
+                else:
+                    chunks = []
+                tool_result = _format_rag_results(chunks)
+
+                # Append assistant tool-call message + tool result to history
+                # Must convert SDK object to plain dict for the next API call
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": choice.message.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            },
+                        }
+                        for tc in choice.message.tool_calls
+                    ],
+                }
+                msgs_with_tool = msgs + [
+                    assistant_msg,
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": tool_result,
+                    },
+                ]
+
+                # ── Step 3: stream final answer with retrieved context ───────
+                final_resp = client.chat.completions.create(
+                    model="gpt-5.2-chat-latest",
+                    messages=msgs_with_tool,
+                    stream=True,
+                )
+                for chunk in final_resp:
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        yield json.dumps({"type": "delta", "content": delta.content}) + "\n"
+
+            else:
+                # ── No tool call — stream the direct response ────────────────
+                content = choice.message.content or ""
+                if content:
+                    yield json.dumps({"type": "delta", "content": content}) + "\n"
+
+            yield json.dumps({"type": "done"}) + "\n"
+
+        except Exception as e:
+            yield json.dumps({"type": "error", "message": str(e)}) + "\n"
+
+    return StreamingResponse(stream(), media_type="application/x-ndjson")
+
+
+@app.post("/chat/image")
+async def chat_image(req: ImageRequest):
+    """Generate an image using Qwen image generation model and return base64 PNG."""
+    if not os.environ.get("DASHSCOPE_API_KEY"):
+        raise HTTPException(status_code=500, detail="DASHSCOPE_API_KEY not set")
+    try:
+        import dashscope
+        from dashscope import MultiModalConversation
+        import httpx as _httpx
+        import base64 as _base64
+        dashscope.base_http_api_url = 'https://dashscope.aliyuncs.com/api/v1'
+
+        # Build full conversation history + current request, same as /chat.
+        # GPT reads the context and compresses it into a self-contained image prompt.
+        history_msgs = [
+            {"role": m.role, "content": m.content}
+            for m in req.history
+            if isinstance(m.content, str) and m.content.strip()
+        ]
+        messages_for_gpt = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a helpful assistant. The user wants to generate an image based on the current conversation. "
+                    "Read the full conversation history to understand what has been discussed "
+                    "(e.g. system design, module breakdown, data flow, visual style). "
+                    "Compress the relevant context into a clear, self-contained image generation prompt in English. "
+                    "The prompt should describe: what to show, how it is arranged, and what visual style to use. "
+                    "Output ONLY the prompt text — no explanation, no preamble."
+                )
+            },
+            *history_msgs,
+            {"role": "user", "content": req.prompt},
+        ]
+        gpt_resp = client.chat.completions.create(
+            model="gpt-5.2-chat-latest",
+            messages=messages_for_gpt,
+            temperature=0.4,
+        )
+        image_prompt = gpt_resp.choices[0].message.content.strip()
+        print(f"🖼️  Image prompt: {image_prompt[:120]}...")
+
+        # Call Qwen image generation with the context-aware prompt
+        response = MultiModalConversation.call(
+            api_key=os.environ.get("DASHSCOPE_API_KEY"),
+            model="qwen-image-2.0-pro",
+            messages=[{"role": "user", "content": [{"text": image_prompt}]}],
+            result_format='message',
+            stream=False,
+            watermark=False,
+            prompt_extend=True,
+            size='1536*1152',
+        )
+        if response.status_code != 200:
+            raise HTTPException(status_code=500, detail=f"Qwen API error: {response}")
+
+        content = response.output['choices'][0]['message']['content']
+        image_url = next(item['image'] for item in content if isinstance(item, dict) and 'image' in item)
+        img_bytes = _httpx.get(image_url, timeout=30).content
+        b64 = _base64.b64encode(img_bytes).decode('utf-8')
+        return JSONResponse({"type": "image", "b64": b64})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     import uvicorn

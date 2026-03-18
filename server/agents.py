@@ -186,13 +186,10 @@ class PlannerAgent:
             return []
 
         scored_clusters = []
-        for label, emb in self.cluster_embeddings.items():
-            emb_arr = np.array(emb).reshape(1, -1)
-            score = cosine_similarity(query_emb, emb_arr)[0][0]
-            scored_clusters.append((label, score))
-            
-        # Sort by score descending
-        scored_clusters.sort(key=lambda x: x[1], reverse=True)
+        all_labels = list(self.cluster_embeddings.keys())
+        all_embs = np.array([self.cluster_embeddings[l] for l in all_labels])
+        scores = cosine_similarity(query_emb, all_embs)[0]
+        scored_clusters = sorted(zip(all_labels, scores.tolist()), key=lambda x: x[1], reverse=True)
         
         # 2. Select Reference Clusters (Near vs Far)
         # Strategy:
@@ -265,7 +262,41 @@ class PlannerAgent:
         # We want to give the LLM specific "Reference Packs"
         
         reference_context_str = ""
-        
+
+        # Pre-fetch community summaries for all selected references in parallel
+        def _fetch_summaries_for_ref(ref):
+            if ref["type"] == "NEAR_FIELD_MISSING" or ref["cluster_id"] is None:
+                return ref["cluster_id"], []
+            c_id = ref["cluster_id"]
+            cluster_data = self.topology_knowledge["scene_clusters"][c_id]
+            comm_dist = cluster_data.get("community_distribution", {})
+            sorted_comms = sorted(comm_dist.items(), key=lambda x: x[1], reverse=True)
+            relevant_comm_ids = [c[0] for c in sorted_comms[:6]]
+            if not relevant_comm_ids:
+                return c_id, []
+            def _fetch_comm_summaries(tx, comm_ids):
+                cypher = """
+                MATCH (n:LlamaNode)
+                WHERE n.community_L0 IN $comm_ids
+                RETURN DISTINCT n.community_L0 as id, n.summary_L0 as summary
+                """
+                result = tx.run(cypher, comm_ids=comm_ids)
+                return list(result)
+            try:
+                records = run_with_retry(
+                    lambda: execute_read_with_session(self.graph_store._driver, _fetch_comm_summaries, relevant_comm_ids)
+                )
+                return c_id, [f"- [Community {r['id']}]: {r['summary']}" for r in records]
+            except Exception as e:
+                print(f"⚠️ Failed to fetch community summaries for planning: {e}")
+                return c_id, []
+
+        refs_needing_fetch = [r for r in selected_references if r["type"] != "NEAR_FIELD_MISSING" and r["cluster_id"] is not None]
+        comm_summaries_cache = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(refs_needing_fetch) or 1) as _ex:
+            for c_id, lines in _ex.map(_fetch_summaries_for_ref, refs_needing_fetch):
+                comm_summaries_cache[c_id] = lines
+
         for idx, ref in enumerate(selected_references):
             if ref["type"] == "NEAR_FIELD_MISSING":
                 ref_block = f"""
@@ -275,43 +306,15 @@ class PlannerAgent:
             """
                 reference_context_str += ref_block
                 continue
-                
+
             c_id = ref["cluster_id"]
-            if c_id is None: continue # Should not happen unless logic error
+            if c_id is None: continue
 
             cluster_data = self.topology_knowledge["scene_clusters"][c_id]
-            
-            # Get communities for this cluster
-            comm_dist = cluster_data.get("community_distribution", {})
-            sorted_comms = sorted(comm_dist.items(), key=lambda x: x[1], reverse=True)
-            top_comms_ids = sorted_comms[:6]
-                
-            relevant_comm_ids = [c[0] for c in top_comms_ids]
-            
-            # Fetch summaries for these communities
-            comm_summaries_text = []
-            if relevant_comm_ids:
-                def _fetch_comm_summaries(tx, comm_ids):
-                    cypher = """
-                    MATCH (n:LlamaNode) 
-                    WHERE n.community_L0 IN $comm_ids
-                    RETURN DISTINCT n.community_L0 as id, n.summary_L0 as summary
-                    """
-                    result = tx.run(cypher, comm_ids=comm_ids)
-                    return list(result)
+            comm_summaries_text = comm_summaries_cache.get(c_id, [])
 
-                # Use run_with_retry for Neo4j interaction
-                try:
-                    records = run_with_retry(
-                        lambda: execute_read_with_session(self.graph_store._driver, _fetch_comm_summaries, relevant_comm_ids)
-                    )
-                    for record in records:
-                        comm_summaries_text.append(f"- [Community {record['id']}]: {record['summary']}")
-                except Exception as e:
-                    print(f"⚠️ Failed to fetch community summaries for planning: {e}")
-            
             # Extract Common Patterns with Claims
-            patterns_text = [] 
+            patterns_text = []
             for p_key in ["common_patterns_3", "common_patterns_4"]:
                 patterns = cluster_data.get(p_key, [])
                 # Take top 3 sorted by count
@@ -322,7 +325,7 @@ class PlannerAgent:
                     if seq and claim:
                         seq_str = " -> ".join(seq)
                         patterns_text.append(f"- Pattern: [{seq_str}]\n  * Insight: {claim}")
-            
+
             patterns_section = ""
             if patterns_text:
                 patterns_section = "\n**Common Workflow Patterns & Insights:**\n" + "\n".join(patterns_text)
@@ -497,53 +500,53 @@ class RetrieverAgent:
 
         return structural_hints
     
-    def rerank_with_llm(self, query, retrieved_skeletons):
-        if not retrieved_skeletons: return []
-        candidates_text = ""
-        for i, node in enumerate(retrieved_skeletons):
-            content_preview = node.node.text[:500].replace("\n", " ")
-            candidates_text += f"--- Candidate {i} ---\n {content_preview}\n\n"
-        prompt = f"""
-        ##TASK:
-        Identify the SINGLE candidate from the list below that BEST matches the user's specific requirements.
+    # def rerank_with_llm(self, query, retrieved_skeletons):
+    #     if not retrieved_skeletons: return []
+    #     candidates_text = ""
+    #     for i, node in enumerate(retrieved_skeletons):
+    #         content_preview = node.node.text[:500].replace("\n", " ")
+    #         candidates_text += f"--- Candidate {i} ---\n {content_preview}\n\n"
+    #     prompt = f"""
+    #     ##TASK:
+    #     Identify the SINGLE candidate from the list below that BEST matches the user's specific requirements.
 
-        ##CRITERIA:
-        1. The candidate must be the most relevant to the user's requirements.
-        2. The candidate must be the most complete to include the specific nodes mentioned in the user's query.
+    #     ##CRITERIA:
+    #     1. The candidate must be the most relevant to the user's requirements.
+    #     2. The candidate must be the most complete to include the specific nodes mentioned in the user's query.
 
-        ##Candidates:
-        {candidates_text}
+    #     ##Candidates:
+    #     {candidates_text}
 
-        ##User Query:
-        {query}
+    #     ##User Query:
+    #     {query}
 
-        ##Output Format:
-        Return the top 3 indices of the best candidates in order of preference (e.g., "1, 2, 0").
+    #     ##Output Format:
+    #     Return the top 3 indices of the best candidates in order of preference (e.g., "1, 2, 0").
 
-        """
-        try:
-            response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0,
-            ).choices[0].message.content
-            indices = [int(x.strip()) for x in response.split(",") if x.strip().isdigit()]
-            valid_skeletons = []
-            for i in indices:
-                if 0 <= i < len(retrieved_skeletons):
-                    valid_skeletons.append(retrieved_skeletons[i])
+    #     """
+    #     try:
+    #         response = self.client.chat.completions.create(
+    #             model="gpt-4o-mini",
+    #             messages=[{"role": "user", "content": prompt}],
+    #             temperature=0,
+    #         ).choices[0].message.content
+    #         indices = [int(x.strip()) for x in response.split(",") if x.strip().isdigit()]
+    #         valid_skeletons = []
+    #         for i in indices:
+    #             if 0 <= i < len(retrieved_skeletons):
+    #                 valid_skeletons.append(retrieved_skeletons[i])
 
-            if len(valid_skeletons) < 3:
-                remaining_indices = [idx for idx in range(len(retrieved_skeletons)) if idx not in indices]
-                for idx in remaining_indices:
-                    if len(valid_skeletons) < 3:
-                        valid_skeletons.append(retrieved_skeletons[idx])
+    #         if len(valid_skeletons) < 3:
+    #             remaining_indices = [idx for idx in range(len(retrieved_skeletons)) if idx not in indices]
+    #             for idx in remaining_indices:
+    #                 if len(valid_skeletons) < 3:
+    #                     valid_skeletons.append(retrieved_skeletons[idx])
 
-            return valid_skeletons
+    #         return valid_skeletons
             
-        except Exception as e:
-            print(f"Error: {e}")
-            return None
+    #     except Exception as e:
+    #         print(f"Error: {e}")
+    #         return None
 
 
 class IntegratorAgent:
@@ -714,21 +717,24 @@ class IntegratorAgent:
         - Proper nouns and necessary technical terms may remain in English.
         ### Steps and Rules 
         1. **Define the main storyline**: Define a clear functional mainline based on the user's requirements and the provided perspective, and synthesize a detailed overall_description of the main storyline.
-        2. **Define Modules**: Define all the necessary modules for this achitecture. Keep it simple, with a maximum of 4-5 key functional modules. Define inputs and outputs
+        2. **Define Modules**: Define all the necessary modules for this achitecture. Keep it concise, with a maximum of 6-8 key functional processing modules (input and output nodes are not considered as functional processing modules). Define inputs and outputs
         First, consider all the modules that are necessary for the mainline, including the base anchors. 
         Then, in addition to the main line, add supporting functional nodes. These nodes can be connected to the main line and derived from it, but they MUST NOT be completely independent of the main line.
-            - **Naming Rule**: Use more specific and contextually relevant node names to enable users to easily identify their functions. DO NOT directly copying the wording from the paper. DO NOT use technical labels (such as parser, engine, neural network, etc.) or long implementation names (e.g. NOT "Gaze360: Physically Unconstrained...").
+            - **Naming Rule**: Use concise, plain-language names that describe *what the node does*, not what it is. Avoid generic structural suffixes like "模块", "单元", "矩阵", "引擎", "系统", "组件", "层", "网络". Instead of "优先级解释展示单元" use "优先级解释"; instead of "动态优先级与资源决策模块" use "优先级动态分析"; instead of "任务特征抽取单元" use "任务特征提取". DO NOT directly copy wording from the paper. DO NOT use technical labels (such as parser, engine, neural network, etc.) or long implementation names (e.g. NOT "Gaze360: Physically Unconstrained...").
             - Ensure the added nodes from the divergent plans are integrated meaningfully.
             - **Provide detailed descriptions for both `function` and `technical_methods` from the retrieved information BUT DO NOT FABRICATE.** You must explicitly articulate the module's specific role, core responsibilities, and crucial importance within the overall system. Explain exactly HOW the technical methods work, process data, and why they were chosen, avoiding brief or vague summaries.
             - If there are subnodes within the modules (based on the retrieved information and relevant to the current context), they should also be defined. Explicitly map out the intermediate processes and data flow within the module using subnodes so its internal logic is transparent.
         3. **Connect the Flow**: Use the topology info to decide logical connections. 
-            - Ensure new conceptual modules have comprehensive connections with the base logic to fully realize their functional value. DO NOT let them become dead ends unless explicitly defined as output endpoints.
+            - Ensure the architecture has a clear primary end-to-end flow across the core modules.
+            - Ensure new conceptual modules have meaningfully integrated into the base logic, but do not connect them to every possibly related module. A module only needs the minimum necessary connections to realize its functional role.
+            - Prefer module-level connections, unless a subnode is truly the key sender or receiver. ONLY use subnode-level external connections when the subnode is the actual locus of computation or decision and connecting at module level would hide an important mechanism.
             - All the connections should be implemented from the modules defined above. Do not include any other nodes, especially when defining the source_mod and the target_mod in ports.
             - **Graph Cleaning**: Merge parallel edges between the same two nodes. Do not create 'shadow' nodes that duplicate existing functions. Ensure the graph is a single connected component if possible.
             - If Module A usually follows Module B in Paper X, try to preserve that flow if it fits.
         4. **Check the architecture**:
             - REMOVE redundant nodes and connections (perform the same function even with different names).
             - REMOVE or RECHECK any nodes that are isolated or unused.
+            - Favor a diagram that is readable and topologically coherent, rather than one with maximally dense connectivity.
         
         ### Final Output Structure (in JSON format)
         {{
@@ -952,6 +958,27 @@ class EditorAgent:
                         "required": ["query"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "retrieve_topology",
+                    "description": "Retrieve structural connection paths between two modules from the knowledge graph. Use this when you need to understand how two components are typically connected in literature, or when you are adding/reconnecting a module and need to know its upstream/downstream neighbors.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "source": {
+                                "type": "string",
+                                "description": "Name or description of the source module."
+                            },
+                            "target": {
+                                "type": "string",
+                                "description": "Name or description of the target module."
+                            }
+                        },
+                        "required": ["source", "target"]
+                    }
+                }
             }
         ]
 
@@ -976,9 +1003,10 @@ class EditorAgent:
         You are an expert System Architect. You are collaborating with a user to modify a system architecture design.
         
         ## Your Capabilities
-        1. **Analyze**: Understand the user's intent and the current architecture. 
-        2. **Retrieve**: If the user asks for something that need specific knowledge or technical details (e.g., "Add a Kafka stream", "Use a Transformer model"), use the `retrieve_knowledge` tool to get technical details.
-        3. **Modify**: Update the architecture JSON to reflect the changes.
+        1. **Analyze**: Understand the user's intent and the current architecture.
+        2. **Retrieve Knowledge**: If the user asks for something that needs specific knowledge or technical details (e.g., "Add a Kafka stream", "Use a Transformer model"), use the `retrieve_knowledge` tool to get technical details.
+        3. **Retrieve Topology**: If you are adding, reconnecting, or repositioning a module and need to know how it typically connects to other components in literature, use the `retrieve_topology` tool with the source and target module names. This returns validated structural paths from the knowledge graph.
+        4. **Modify**: Update the architecture JSON to reflect the changes.
         
         ## Evolution Context
         This is the current state of the plan. Here is the history of how it evolved:
@@ -991,7 +1019,8 @@ class EditorAgent:
         The user has provided an instruction. You must:
         1. Analyze the instruction in context of the history (avoid repeating undone changes, or building on top of recent changes).
         2. If you need external knowledge (e.g., technical specs, similar modules), call `retrieve_knowledge`.
-        3. Decide the response mode:
+        3. If you are adding or reconnecting a module and need to know its typical upstream/downstream neighbors, call `retrieve_topology` with the relevant source and target names to get literature-validated connection paths.
+        4. Decide the response mode:
            - plan_update: update the architecture JSON
            - direct_answer: answer the user without changing the plan
            - evidence_answer: answer with evidence and citations without changing the plan
@@ -1011,6 +1040,7 @@ class EditorAgent:
         2. **Preservation**: Keep existing modules unless asked to remove them.
         3. **Consistency**: Ensure the graph remains connected and logical.
         4. **Integrity**: Ensure all `source_mod` and `target_mod` in ports refer to valid keys in `module_details`.
+        5. **Naming Rule**: When adding or renaming nodes, use concise plain-language names that describe *what the node does*. Avoid generic structural suffixes like "模块", "单元", "矩阵", "引擎", "系统", "组件", "层", "网络". For example: "优先级解释" not "优先级解释展示单元"; "优先级动态分析" not "动态优先级与资源决策模块"; "任务特征提取" not "任务特征抽取单元".
         
         
         ## Final Output Format
@@ -1094,13 +1124,13 @@ class EditorAgent:
                             args = json.loads(tool_call.function.arguments)
                             query = args.get("query")
                             print(f"🔍 Editor calling tool: retrieve_knowledge('{query}')")
-                            
+
                             # Execute retrieval using the passed retriever instance
                             # We'll use a simplified retrieval wrapper here
                             # Create fake anchors for the retriever
                             search_anchors = [{"user_term": query, "description": "User requested enhancement"}]
                             retrieved_map = retriever.retrieve_for_module(search_anchors, top_k=3, include_topology=True)
-                            
+
                             # Format results
                             context_text = f"### Retrieval Results for '{query}':\n"
                             found_any = False
@@ -1113,14 +1143,66 @@ class EditorAgent:
                                     context_text += f"- Title: {title}\n"
                                     context_text += f"  Snippet: {snippet}...\n"
                                     context_text += f"  Source: {source}\n"
-                            
+
                             if not found_any:
                                 context_text += "No relevant modules found."
-                                
+
                             messages.append({
                                 "tool_call_id": tool_call.id,
                                 "role": "tool",
                                 "name": "retrieve_knowledge",
+                                "content": context_text
+                            })
+
+                        elif tool_call.function.name == "retrieve_topology":
+                            args = json.loads(tool_call.function.arguments)
+                            source = args.get("source")
+                            target = args.get("target")
+                            print(f"🔍 Editor calling tool: retrieve_topology('{source}' -> '{target}')")
+
+                            # Execute structural path retrieval
+                            user_relations = [{"source": source, "target": target, "type": "FLOWS_TO"}]
+                            structural_paths = retriever.retrieve_structure_paths(user_relations)
+
+                            # Format results similar to IntegratorAgent.format_hints
+                            context_text = f"### Structural Paths for '{source}' -> '{target}':\n"
+                            if structural_paths:
+                                for i, path in enumerate(structural_paths):
+                                    nodes = path.get('path_nodes', [])
+                                    rels = path.get('relations', [])
+                                    rel_props = path.get('rel_props', [])
+
+                                    chain_desc = []
+                                    if nodes:
+                                        start_node_name = nodes[0].get('name', 'Unknown')
+                                        chain_desc.append(f"[{start_node_name}]")
+
+                                        for j, rel in enumerate(rels):
+                                            if j + 1 < len(nodes):
+                                                target_node = nodes[j+1].get('name', 'Unknown')
+                                                func = nodes[j+1].get('function', '')
+                                                if func:
+                                                    target_node += f" ({func[:100]}...)"
+
+                                                data_content = ""
+                                                if j < len(rel_props) and rel_props[j] and 'edge_label' in rel_props[j]:
+                                                    lbl = rel_props[j]['edge_label']
+                                                    if lbl and lbl != "null":
+                                                        data_content = f": {lbl}"
+
+                                                if rel == "FLOWS_TO":
+                                                    chain_desc.append(f" --({data_content})--> [{target_node}]")
+                                                else:
+                                                    chain_desc.append(f" --({rel}{data_content})--> [{target_node}]")
+
+                                    context_text += f"  Path {i+1}: {''.join(chain_desc)}\n"
+                            else:
+                                context_text += "No structural paths found in literature. You may need to infer the connection based on domain knowledge."
+
+                            messages.append({
+                                "tool_call_id": tool_call.id,
+                                "role": "tool",
+                                "name": "retrieve_topology",
                                 "content": context_text
                             })
                     
@@ -1134,25 +1216,27 @@ class EditorAgent:
                     # Try direct JSON parsing
                     try:
                         result = json.loads(content)
-                        return result
+                        return self._reflect(result, current_plan, user_instruction)
                     except json.JSONDecodeError:
                         print(f"Failed to parse JSON directly. Attempting regex extraction...")
                         # Fallback: extract JSON from markdown code blocks
                         json_match = re.search(r'```(?:json)?\s*(.*?)\s*```', content, re.DOTALL)
                         if json_match:
                             try:
-                                return json.loads(json_match.group(1))
+                                result = json.loads(json_match.group(1))
+                                return self._reflect(result, current_plan, user_instruction)
                             except json.JSONDecodeError:
                                 pass
-                        
+
                         # Fallback: extract outermost JSON object
                         json_match = re.search(r'(\{.*\})', content, re.DOTALL)
                         if json_match:
                             try:
-                                return json.loads(json_match.group(1))
+                                result = json.loads(json_match.group(1))
+                                return self._reflect(result, current_plan, user_instruction)
                             except json.JSONDecodeError:
                                 pass
-                        
+
                         print(f"Error parsing final JSON even after extraction. Retrying...")
                         # Append a user message asking to fix the JSON format
                         messages.append({"role": "assistant", "content": content})
@@ -1166,218 +1250,367 @@ class EditorAgent:
             except Exception as e:
                 print(f"Error in edit_plan loop: {e}")
                 break
-                
+
         return None
+
+    def _reflect(self, result, original_plan, user_instruction):
+        """
+        Post-edit reflection: if the editor produced a plan_update, check whether
+        any nodes from the original plan were silently dropped without justification.
+        If so, ask the LLM to restore them while keeping the editor's changes intact.
+        Returns the (possibly corrected) result dict.
+        """
+        # Only apply to plan_update responses
+        if not isinstance(result, dict) or result.get("output_type") != "plan_update":
+            return result
+
+        revised_plan = result.get("revised_plan")
+        if not revised_plan:
+            return result
+
+        def get_module_names(plan):
+            if not isinstance(plan, dict):
+                return set()
+            md = plan.get("module_details", [])
+            if isinstance(md, list):
+                return {m.get("name", "") for m in md if m.get("name")}
+            if isinstance(md, dict):
+                return set(md.keys())
+            return set()
+
+        orig_names    = get_module_names(original_plan if isinstance(original_plan, dict) else {})
+        revised_names = get_module_names(revised_plan)
+        dropped       = orig_names - revised_names
+
+        if not dropped:
+            print("✅ Reflection: No nodes were silently dropped.")
+            return result
+
+        print(f"⚠️  Reflection: {len(dropped)} node(s) missing from revised plan: {dropped}")
+
+        # Build lookup for original module entries
+        orig_md = (original_plan if isinstance(original_plan, dict) else {}).get("module_details", [])
+        if isinstance(orig_md, list):
+            orig_lookup = {m.get("name", ""): m for m in orig_md}
+        else:
+            orig_lookup = dict(orig_md)
+
+        prompt = f"""You are a careful architecture reviewer. An EditorAgent just modified a system architecture.
+Your job is to decide which dropped nodes should be RESTORED and which were legitimately removed.
+
+## User Instruction
+{user_instruction}
+
+## Nodes present in the original plan but MISSING from the revised plan
+{json.dumps(list(dropped), ensure_ascii=False, indent=2)}
+
+## Original definitions of those nodes
+{json.dumps({n: orig_lookup.get(n, {}) for n in dropped}, ensure_ascii=False, indent=2)}
+
+## Revised plan (editor output)
+{json.dumps(revised_plan, ensure_ascii=False, indent=2)}
+
+## Rules
+1. RESTORE a node if:
+   - The user instruction did NOT ask to remove it.
+   - It is not functionally duplicated by a new/renamed node in the revised plan.
+   - Removing it breaks connectivity or completeness of the architecture.
+2. LEAVE OUT a node if:
+   - The user explicitly asked to remove it.
+   - It is clearly superseded by a renamed or restructured node in the revised plan.
+   - It was isolated or redundant.
+
+## Output (strict JSON, no markdown)
+Return the corrected full revised plan. If you restore nodes, re-integrate their ports
+so the graph stays connected. Keep all editor changes intact.
+
+{{
+  "restored_nodes": ["list of node names you are restoring, empty list if none"],
+  "rationale": "brief explanation",
+  "revised_plan": {{ ...full corrected plan with overall_description and module_details... }}
+}}"""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+            )
+            reflection_result = json.loads(response.choices[0].message.content)
+            restored = reflection_result.get("restored_nodes", [])
+            corrected_plan = reflection_result.get("revised_plan")
+            if restored:
+                print(f"✅ Reflection: Restored {restored}. Reason: {reflection_result.get('rationale', '')}")
+            else:
+                print("✅ Reflection: All dropped nodes were legitimately removed.")
+            if corrected_plan:
+                result["revised_plan"] = corrected_plan
+        except Exception as e:
+            print(f"⚠️  Reflection call failed ({e}), keeping editor output unchanged.")
+
+        return result
 
 
 class ConflictSolver:
     def __init__(self):
         pass
-    
+
+    @staticmethod
+    def _normalize(arch_json_str):
+        """Parse and normalize module_details to a dict keyed by name."""
+        data = json.loads(arch_json_str) if isinstance(arch_json_str, str) else arch_json_str
+        md = data.get("module_details", {})
+        if isinstance(md, list):
+            md = {m.get("name", f"__unknown_{i}"): m for i, m in enumerate(md)}
+        return data, md
+
+    @staticmethod
+    def _sub_ids(m_info):
+        """Return the set of sub-node names declared in a module."""
+        return {s.get("name") for s in m_info.get("sub_nodes", []) if s.get("name")}
+
+    @staticmethod
+    def _edge_key(src_mod, tgt_mod, src_node, tgt_node):
+        """Canonical dedup key for an edge (ignores label)."""
+        return (src_mod or "", tgt_mod or "", src_node or "", tgt_node or "")
+
     def detect_conflicts(self, arch_json_str):
         """
-        Inspects the JSON for logical errors and returns a list of issues.
-        Returns: (is_valid: bool, report: str)
+        Inspect the JSON for hard errors and soft warnings.
+
+        Hard errors (is_valid=False):
+          - Dangling edge: invalid module reference in incoming/outgoing
+          - Invalid sub-node reference in internal_flow, connects_to_internal_node,
+            originates_from_internal_node, or target_node
+          - Truly isolated module: no connections AND no meaningful content
+
+        Soft warnings (printed only, do not affect is_valid):
+          - Sub-node not referenced by any port
+          - Duplicate edges
         """
         try:
-            if isinstance(arch_json_str, str):
-                data = json.loads(arch_json_str)
-            else:
-                data = arch_json_str
-        except json.JSONDecodeError:
-            return False, "CRITICAL: Invalid JSON format."
+            data, module_details = self._normalize(arch_json_str)
+        except Exception as e:
+            return False, f"CRITICAL: Invalid JSON format. ({e})"
 
-        module_details = data.get("module_details", {})
         if not module_details:
             return False, "CRITICAL: 'module_details' field is missing or empty."
 
-        # === Normalization: Handle List vs Dict ===
-        if isinstance(module_details, list):
-            # Convert list to dict using 'name' as key
-            normalized_details = {}
-            for item in module_details:
-                name = item.get("name", "Unknown")
-                normalized_details[name] = item
-            module_details = normalized_details
-
-        issues = []
+        hard_issues = []
         valid_mod_ids = set(module_details.keys())
         connected_modules = set()
 
-        # Check Edges validity
         for m_id, m_info in module_details.items():
             ports = m_info.get("ports", {})
-            
-            # Incoming
+            sub_ids = self._sub_ids(m_info)
+
+            # ── Incoming ────────────────────────────────────────────────────
             for edge in ports.get("incoming", []):
                 src = edge.get("source_mod")
-                if src not in valid_mod_ids:
-                    issues.append(f"- Invalid Connection: Module '{m_id}' expects input from '{src}', but '{src}' is not defined.")
+                if src and src not in valid_mod_ids:
+                    hard_issues.append(
+                        f"- Dangling incoming edge: Module '{m_id}' references undefined source '{src}'."
+                    )
                 else:
-                    connected_modules.add(m_id)
-                    connected_modules.add(src)
+                    connected_modules.update(filter(None, [m_id, src]))
+                cti = edge.get("connects_to_internal_node")
+                if cti and cti not in sub_ids:
+                    hard_issues.append(
+                        f"- Invalid sub-node ref: 'connects_to_internal_node'='{cti}' in '{m_id}' "
+                        f"not found in its sub_nodes."
+                    )
 
-            # Outgoing
+            # ── Outgoing ────────────────────────────────────────────────────
             for edge in ports.get("outgoing", []):
                 tgt = edge.get("target_mod")
-                if tgt not in valid_mod_ids:
-                    issues.append(f"- Invalid Connection: Module '{m_id}' sends output to '{tgt}', but '{tgt}' is not defined.")
+                if tgt and tgt not in valid_mod_ids:
+                    hard_issues.append(
+                        f"- Dangling outgoing edge: Module '{m_id}' references undefined target '{tgt}'."
+                    )
                 else:
-                    connected_modules.add(m_id)
-                    connected_modules.add(tgt)
+                    connected_modules.update(filter(None, [m_id, tgt]))
+                ofin = edge.get("originates_from_internal_node")
+                if ofin and ofin not in sub_ids:
+                    hard_issues.append(
+                        f"- Invalid sub-node ref: 'originates_from_internal_node'='{ofin}' in '{m_id}' "
+                        f"not found in its sub_nodes."
+                    )
+                tgt_node = edge.get("target_node")
+                if tgt_node and tgt in valid_mod_ids:
+                    tgt_subs = self._sub_ids(module_details[tgt])
+                    if tgt_subs and tgt_node not in tgt_subs:
+                        hard_issues.append(
+                            f"- Invalid sub-node ref: 'target_node'='{tgt_node}' in outgoing of '{m_id}' "
+                            f"not found in target module '{tgt}'."
+                        )
 
-        # Check for Isolated Nodes (Islands)
-        if len(valid_mod_ids) > 1:
-            for m_id in valid_mod_ids:
-                if m_id not in connected_modules:
-                    issues.append(f"- Isolated Node: Module '{m_id}' has no incoming or outgoing connections to other modules.")
-        
-        # Check for Isolated Sub-nodes
-        for m_id, m_info in module_details.items():
-            sub_nodes = m_info.get("sub_nodes", [])
-            if not sub_nodes: continue
-            
-            ports = m_info.get("ports", {})
-            referenced_subnodes = set()
-            
-            # Check incoming (connects_to_internal_node)
-            for edge in ports.get("incoming", []):
-                internal = edge.get("connects_to_internal_node")
-                if internal: referenced_subnodes.add(internal)
-                
-            # Check outgoing (originates_from_internal_node)
-            for edge in ports.get("outgoing", []):
-                internal = edge.get("originates_from_internal_node")
-                if internal: referenced_subnodes.add(internal)
-                
-            # Check internal_flow
+            # ── Internal flow ───────────────────────────────────────────────
             for flow in ports.get("internal_flow", []):
-                referenced_subnodes.add(flow.get("source_node"))
-                referenced_subnodes.add(flow.get("target_node"))
-                
-            for sub in sub_nodes:
-                sub_name = sub.get("name")
-                if sub_name and sub_name not in referenced_subnodes:
-                     issues.append(f"- Isolated Sub-node: Sub-node '{sub_name}' in Module '{m_id}' is not connected to any internal or external port.")
+                for field in ("source_node", "target_node"):
+                    node_ref = flow.get(field)
+                    if node_ref and node_ref not in sub_ids:
+                        hard_issues.append(
+                            f"- Invalid internal_flow ref: '{field}'='{node_ref}' in '{m_id}' "
+                            f"not found in its sub_nodes."
+                        )
 
-        if not issues:
+        # ── Isolated modules ────────────────────────────────────────────────
+        if len(valid_mod_ids) > 1:
+            for m_id, m_info in module_details.items():
+                if m_id not in connected_modules:
+                    has_content = bool(
+                        m_info.get("function") or
+                        m_info.get("brief_description") or
+                        m_info.get("sub_nodes")
+                    )
+                    if has_content:
+                        print(f"  ⚠️  Soft warning: '{m_id}' has no connections but has content — needs review.")
+                    else:
+                        hard_issues.append(
+                            f"- Isolated empty module: '{m_id}' has no connections and no meaningful content."
+                        )
+
+        # ── Soft: unreferenced sub-nodes (warn only) ────────────────────────
+        for m_id, m_info in module_details.items():
+            sub_ids = self._sub_ids(m_info)
+            if not sub_ids:
+                continue
+            ports = m_info.get("ports", {})
+            referenced = set()
+            for edge in ports.get("incoming", []):
+                if edge.get("connects_to_internal_node"):
+                    referenced.add(edge["connects_to_internal_node"])
+            for edge in ports.get("outgoing", []):
+                if edge.get("originates_from_internal_node"):
+                    referenced.add(edge["originates_from_internal_node"])
+            for flow in ports.get("internal_flow", []):
+                referenced.update(filter(None, [flow.get("source_node"), flow.get("target_node")]))
+            for sub_name in sub_ids - referenced:
+                print(f"  ⚠️  Soft warning: sub-node '{sub_name}' in '{m_id}' not referenced by any port.")
+
+        if not hard_issues:
             return True, "No conflicts found."
-        
-        return False, "\n".join(issues)
+        return False, "\n".join(hard_issues)
 
     def resolve(self, arch_json_str):
         """
-        Parses the architecture JSON, validates topology, fixes broken edges,
-        and removes isolated nodes to ensure a valid graph.
+        Hard-clean the architecture JSON:
+          1. Remove dangling edges (invalid module refs).
+          2. Clear invalid sub-node refs in connects_to / originates_from /
+             target_node / internal_flow (set to None rather than crashing).
+          3. Deduplicate exact-duplicate edges (same src_mod, tgt_mod,
+             src_node, tgt_node — ignoring label).
+          4. Remove modules that are both unconnected AND content-empty.
+          5. Output module_details as a list.
         """
         try:
-            if isinstance(arch_json_str, str):
-                data = json.loads(arch_json_str)
-            else:
-                data = arch_json_str
-        except json.JSONDecodeError:
+            data, module_details = self._normalize(arch_json_str)
+        except Exception:
             print("❌ ConflictSolver: Invalid JSON string.")
             return arch_json_str
 
-        module_details = data.get("module_details", {})
         if not module_details:
-            return json.dumps(data)
+            return json.dumps(arch_json_str if isinstance(arch_json_str, dict) else {})
 
-        # Normalization: Handle List vs Dict
-        if isinstance(module_details, list):
-            print("🕵️ ConflictSolver: Normalized 'module_details' from List to Dict.")
-            normalized_details = {}
-            for item in module_details:
-                name = item.get("name", "Unknown")
-                normalized_details[name] = item
-            module_details = normalized_details
-            data["module_details"] = module_details
+        print("🕵️ ConflictSolver: Resolving topology...")
 
-        print("🕵️ ConflictSolver: Checking topology integrity...")
-        
-        # 1. Collect Valid IDs
         valid_mod_ids = set(module_details.keys())
-        valid_sub_ids = {} # module_id -> set of subnode names
-        
-        for m_id, m_info in module_details.items():
-            subs = set()
-            if "sub_nodes" in m_info and isinstance(m_info["sub_nodes"], list):
-                for sub in m_info["sub_nodes"]:
-                    if "name" in sub:
-                        subs.add(sub["name"])
-            valid_sub_ids[m_id] = subs
-
-        # 2. Fix Edges (Ports)
+        sub_id_map = {m_id: self._sub_ids(m_info) for m_id, m_info in module_details.items()}
         connected_modules = set()
-        
+        removed_edges = 0
+        deduped = 0
+
         for m_id, m_info in module_details.items():
             ports = m_info.get("ports", {})
-            new_ports = {
-                "incoming": [],
-                "outgoing": [],
-                "internal_flow": ports.get("internal_flow", [])
+            sub_ids = sub_id_map[m_id]
+
+            # ── Incoming ────────────────────────────────────────────────────
+            new_incoming, seen = [], set()
+            for edge in ports.get("incoming", []):
+                src = edge.get("source_mod")
+                if src and src not in valid_mod_ids:
+                    print(f"  Removed dangling incoming: '{src}' → '{m_id}'")
+                    removed_edges += 1
+                    continue
+                cti = edge.get("connects_to_internal_node")
+                if cti and cti not in sub_ids:
+                    print(f"  Cleared invalid connects_to_internal_node='{cti}' in '{m_id}'")
+                    edge = {**edge, "connects_to_internal_node": None}
+                key = self._edge_key(src, m_id, edge.get("source_node"), edge.get("connects_to_internal_node"))
+                if key in seen:
+                    deduped += 1
+                    continue
+                seen.add(key)
+                new_incoming.append(edge)
+                connected_modules.update(filter(None, [m_id, src]))
+
+            # ── Outgoing ────────────────────────────────────────────────────
+            new_outgoing, seen = [], set()
+            for edge in ports.get("outgoing", []):
+                tgt = edge.get("target_mod")
+                if tgt and tgt not in valid_mod_ids:
+                    print(f"  Removed dangling outgoing: '{m_id}' → '{tgt}'")
+                    removed_edges += 1
+                    continue
+                ofin = edge.get("originates_from_internal_node")
+                if ofin and ofin not in sub_ids:
+                    print(f"  Cleared invalid originates_from_internal_node='{ofin}' in '{m_id}'")
+                    edge = {**edge, "originates_from_internal_node": None}
+                tgt_node = edge.get("target_node")
+                if tgt_node and tgt in valid_mod_ids:
+                    tgt_subs = sub_id_map.get(tgt, set())
+                    if tgt_subs and tgt_node not in tgt_subs:
+                        print(f"  Cleared invalid target_node='{tgt_node}' in outgoing of '{m_id}'")
+                        edge = {**edge, "target_node": None}
+                key = self._edge_key(m_id, tgt, edge.get("originates_from_internal_node"), edge.get("target_node"))
+                if key in seen:
+                    deduped += 1
+                    continue
+                seen.add(key)
+                new_outgoing.append(edge)
+                connected_modules.update(filter(None, [m_id, tgt]))
+
+            # ── Internal flow ───────────────────────────────────────────────
+            new_internal, seen = [], set()
+            for flow in ports.get("internal_flow", []):
+                src_n, tgt_n = flow.get("source_node"), flow.get("target_node")
+                if (src_n and src_n not in sub_ids) or (tgt_n and tgt_n not in sub_ids):
+                    print(f"  Removed invalid internal_flow '{src_n}→{tgt_n}' in '{m_id}'")
+                    removed_edges += 1
+                    continue
+                key = (src_n or "", tgt_n or "")
+                if key in seen:
+                    deduped += 1
+                    continue
+                seen.add(key)
+                new_internal.append(flow)
+
+            m_info["ports"] = {
+                "incoming": new_incoming,
+                "outgoing": new_outgoing,
+                "internal_flow": new_internal,
             }
-            
-            # Check Incoming
-            if "incoming" in ports and isinstance(ports["incoming"], list):
-                for edge in ports["incoming"]:
-                    src_mod = edge.get("source_mod")
-                    # Check if source module exists
-                    if src_mod not in valid_mod_ids:
-                        print(f"  Start Refactoring: Removed dead incoming link from '{src_mod}' to '{m_id}' (Source not found)")
-                        continue
-                    
-                    # Connection is valid
-                    new_ports["incoming"].append(edge)
-                    connected_modules.add(m_id)
-                    connected_modules.add(src_mod)
 
-            # Check Outgoing
-            if "outgoing" in ports and isinstance(ports["outgoing"], list):
-                for edge in ports["outgoing"]:
-                    tgt_mod = edge.get("target_mod")
-                    # Check if target module exists
-                    if tgt_mod not in valid_mod_ids:
-                        print(f"  Start Refactoring: Removed dead outgoing link from '{m_id}' to '{tgt_mod}' (Target not found)")
-                        continue
-                        
-                    # Connection is valid
-                    new_ports["outgoing"].append(edge)
-                    connected_modules.add(m_id)
-                    connected_modules.add(tgt_mod)
-            
-            # Update ports
-            m_info["ports"] = new_ports
-
-        # 3. Identify and Remove Isolated Nodes
-        # Re-calculate exact usage
-        referenced_modules = set()
+        # ── Remove unconnected + content-empty modules ──────────────────────
+        final_modules = []
+        removed_mods = 0
         for m_id, m_info in module_details.items():
-            ports = m_info.get("ports", {})
-            for e in ports.get("incoming", []):
-                referenced_modules.add(e.get("source_mod"))
-                referenced_modules.add(m_id)
-            for e in ports.get("outgoing", []):
-                referenced_modules.add(e.get("target_mod"))
-                referenced_modules.add(m_id)
-        
-        final_modules = {}
-        cleaned_count = 0
-        
-        for m_id, m_info in module_details.items():
-            if m_id in referenced_modules:
-                final_modules[m_id] = m_info
-            else:
-                print(f"  Start Refactoring: Isolated node '{m_id}' removed.")
-                cleaned_count += 1
-                
-        data["module_details"] = list(final_modules.values())
-        
-        if cleaned_count > 0:
-            print(f"✅ ConflictSolver: Removed {cleaned_count} isolated modules.")
-        else:
-            print(f"✅ ConflictSolver: No isolated modules found.")
+            if m_id not in connected_modules:
+                has_content = bool(
+                    m_info.get("function") or
+                    m_info.get("brief_description") or
+                    m_info.get("sub_nodes")
+                )
+                if not has_content:
+                    print(f"  Removed isolated empty module: '{m_id}'")
+                    removed_mods += 1
+                    continue
+                print(f"  Kept isolated module '{m_id}' (has content — review recommended)")
+            final_modules.append(m_info)
 
+        data["module_details"] = final_modules
+        print(f"✅ ConflictSolver: removed {removed_edges} dangling edges, "
+              f"deduped {deduped} duplicate edges, removed {removed_mods} empty isolated modules.")
         return json.dumps(data, ensure_ascii=False)
     
 

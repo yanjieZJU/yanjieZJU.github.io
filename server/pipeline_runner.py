@@ -1,21 +1,22 @@
 import sys
 import os
 import json
+import concurrent.futures
 
 # Add parent directory to path for config import
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import *
-from server.agents import (
-    PlannerAgent, 
-    RetrieverAgent, 
-    IntegratorAgent,  
+from agents import (
+    PlannerAgent,
+    RetrieverAgent,
+    IntegratorAgent,
     ConflictSolver,
     EditorAgent,
     client
 )
-from server.retriever_neo4j import get_global_stores
-from server.session_manager import create_initial_plan, create_modified_plan, get_session_tree, get_plan_lineage
+from retriever_neo4j import get_global_stores
+from session_manager import create_initial_plan, create_modified_plan, get_session_tree, get_plan_lineage
 
 def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, divergence=True, session_id=None):
     vector_store, graph_store = get_global_stores()
@@ -24,23 +25,19 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
     integrator = IntegratorAgent(client)
     solver = ConflictSolver() # Initialize Solver
     
-    yield json.dumps({"type": "progress", "message": "Searching for structural paths...", "percent": 15}) + "\n"
-    structural_hints = retriever.retrieve_structure_paths(user_relations)
-    
-    # Print structural hints once
+    yield json.dumps({"type": "progress", "message": "Searching knowledge base...", "percent": 15}) + "\n"
+
+    # === Parallelize structural path retrieval + divergent planning (no dependency between them) ===
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _ex:
+        _fut_hints = _ex.submit(retriever.retrieve_structure_paths, user_relations)
+        _fut_plans = _ex.submit(
+            planner.divergent_planning, user_query, base_anchors, num_outputs
+        ) if divergence else None
+        structural_hints = _fut_hints.result()
+        divergent_plans  = _fut_plans.result() if _fut_plans else None
+
     if structural_hints:
         print(integrator.format_hints(structural_hints))
-
-    yield json.dumps({"type": "progress", "message": "Planning divergent perspectives...", "percent": 25}) + "\n"
-    # === Pre-calculate Divergent Plans for ALL Options ===
-    if divergence:
-        divergent_plans = planner.divergent_planning(
-            user_query=user_query,
-            base_anchors=base_anchors,
-            num_outputs=num_outputs
-        )
-    else:
-        divergent_plans = None
 
     # === Step 1: Global Retrieval for Base Anchors (Higher Recall) ===
     print(f"\n🎯 Retrieving Base Anchors (Top-6 for richer context)...")
@@ -134,7 +131,7 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
         
         # === SELF-CORRECTION LOOP ===
         yield json.dumps({"type": "progress", "message": f"Detecting and resolving conflicts for option {i+1}...", "percent": int(base_percent + 15)}) + "\n"
-        max_retries = 5
+        max_retries = 2
         for attempt in range(max_retries + 1):
             if not current_arch_json: break
             
@@ -313,33 +310,28 @@ def run_edit_pipeline(plan_id, current_plan_json, user_instruction, original_que
         return
 
     print(f"✅ Editor Intent: {modification_intent}")
-    
-    # 2. Conflict Check & Refine Loop
-    # Ensure we work with JSON string for consistency in prompt injection if needed, 
-    # but solver handles dicts. Integrator expects string representation in prompt.
-    current_arch_json = modified_arch_json
-    
-    max_retries = 2
-    
-    for attempt in range(max_retries + 1):
-        if not current_arch_json: break
 
-        yield json.dumps({"type": "progress", "message": f"Verifying integrity (Attempt {attempt+1})...", "percent": 50 + (attempt * 10)}) + "\n"
-        
-        is_valid, report = solver.detect_conflicts(current_arch_json)
-        if is_valid:
-            print(f"✅ Modified architecture passed integrity check.")
-            break
-        else:
+    # 2. Conflict Check & Refine Loop — only for plan_update
+    current_arch_json = modified_arch_json
+
+    max_retries = 3
+
+    is_valid, report = solver.detect_conflicts(current_arch_json)
+    if not is_valid:
+        for attempt in range(max_retries):
+            if not current_arch_json: break
             print(f"⚠️ Conflict detected in modified arch:\n{report}")
-            if attempt < max_retries:
-                # Request Fix
-                # Convert dict to json string for the prompt
-                arch_str = json.dumps(current_arch_json, indent=2) if isinstance(current_arch_json, dict) else current_arch_json
-                current_arch_json = integrator.refine_arch(original_query, arch_str, report)
-                # refine_arch returns a string
-            else:
-                print("❌ Max retries reached for modification.")
+            yield json.dumps({"type": "progress", "message": f"Verifying integrity (Attempt {attempt+1})...", "percent": 50 + (attempt * 10)}) + "\n"
+            arch_str = json.dumps(current_arch_json, indent=2) if isinstance(current_arch_json, dict) else current_arch_json
+            current_arch_json = integrator.refine_arch(original_query, arch_str, report)
+            is_valid, report = solver.detect_conflicts(current_arch_json)
+            if is_valid:
+                print(f"✅ Modified architecture passed integrity check.")
+                break
+        else:
+            print("❌ Max retries reached for modification.")
+    else:
+        print(f"✅ Modified architecture passed integrity check.")
 
     # 3. Finalize
     if current_arch_json:
