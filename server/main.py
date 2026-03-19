@@ -110,6 +110,10 @@ class SaveRequest(BaseModel):
     original_query: Optional[str] = None
 
 # --- 4. 核心接口 ---
+@app.get("/ping")
+async def ping():
+    return {"ok": True}
+
 @app.post("/generate")
 async def generate_mermaid(req: GenRequest):
     print(f"收到请求: 描述={req.prompt}, 允许随机节点={req.allowRandomNodes}")
@@ -324,6 +328,9 @@ async def chat_text(req: ChatRequest):
 
     def stream():
         try:
+            # Signal that we're thinking (before first LLM call)
+            yield json.dumps({"type": "thinking"}) + "\n"
+
             # ── Step 1: first call with tools available ──────────────────────
             first_resp = client.chat.completions.create(
                 model="gpt-5.2-chat-latest",

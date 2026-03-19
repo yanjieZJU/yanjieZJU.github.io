@@ -367,8 +367,8 @@
 /* ── Input bar ───────────────────────────────────────────────────────────── */
 .chat-inputbar {
   display: flex;
-  align-items: flex-end;
-  gap: 10px;
+  flex-direction: column;
+  gap: 6px;
   padding: 12px 20px 16px;
   background: #fff;
   border-top: 1px solid #e5e5e5;
@@ -437,4 +437,45 @@
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 420px;
+}
+
+/* ── Image preview (attached before send) ────────────────────────────────── */
+.chat-image-preview {
+  position: relative;
+  width: fit-content;
+  margin-bottom: 6px;
+}
+
+.chat-image-preview img {
+  max-height: 80px;
+  max-width: 160px;
+  border-radius: 6px;
+  border: 1px solid #ddd;
+  display: block;
+}
+
+.chat-image-preview__remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #555;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font-size: 0.65rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.chat-image-preview__remove:hover { background: #d32f2f; }
+
+.chat-inputbar__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex: 1;
 }

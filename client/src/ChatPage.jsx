@@ -2,18 +2,18 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import JSZip from 'jszip';
 import './ChatPage.css';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = import.meta.env.DEV ? 'http://localhost:8000' : '/api';
 
-// ── Detect if the user wants an image ──────────────────────────────────────
-const IMAGE_KEYWORDS = [
-  /^(draw|generate|create|make|show|paint|render|design|illustrate)\b/i,
-  /\b(image|picture|photo|illustration|diagram|chart|figure|poster|logo|icon)\b/i,
-  /生成.*(图|图片|图像|插图|海报)/,
-  /画.*(图|图片|图像)/,
-];
-function isImageRequest(text) {
-  return IMAGE_KEYWORDS.some((re) => re.test(text));
-}
+// ── Detect if the user wants an image (DISABLED) ────────────────────────────
+// const IMAGE_KEYWORDS = [
+//   /^(draw|generate|create|make|show|paint|render|design|illustrate)\b/i,
+//   /\b(image|picture|photo|illustration|diagram|chart|figure|poster|logo|icon)\b/i,
+//   /生成.*(图|图片|图像|插图|海报)/,
+//   /画.*(图|图片|图像)/,
+// ];
+// function isImageRequest(text) {
+//   return IMAGE_KEYWORDS.some((re) => re.test(text));
+// }
 
 // ── Session storage (localStorage) ─────────────────────────────────────────
 function createSession() {
@@ -108,30 +108,17 @@ async function exportLogs() {
 function MessageBubble({ msg }) {
   const isUser = msg.role === 'user';
 
-  function downloadImage() {
-    const a = document.createElement('a');
-    a.href = `data:image/png;base64,${msg.content}`;
-    a.download = `image_${Date.now()}.png`;
-    a.click();
-  }
-
   return (
     <div className={`chat-message ${isUser ? 'chat-message--user' : 'chat-message--assistant'}`}>
       <div className="chat-avatar">{isUser ? '🧑' : '🤖'}</div>
       <div className="chat-bubble">
-        {msg.type === 'image' ? (
-          <div className="chat-image-wrap">
-            <img
-              src={`data:image/png;base64,${msg.content}`}
-              alt="generated"
-              className="chat-image"
-            />
-            <button className="chat-img-dl" onClick={downloadImage} title="Download image">↓ Download</button>
-          </div>
-        ) : msg.type === 'error' ? (
+        {msg.imageData && (
+          <img src={msg.imageData} alt="uploaded" className="chat-image" />
+        )}
+        {msg.type === 'error' ? (
           <span className="chat-error">{msg.content}</span>
         ) : (
-          <span className="chat-text">{msg.content}</span>
+          msg.content && <span className="chat-text">{msg.content}</span>
         )}
         <span className="chat-ts">{new Date(msg.timestamp).toLocaleTimeString()}</span>
       </div>
@@ -159,6 +146,7 @@ export default function ChatPage() {
   const [ragQuery, setRagQuery] = useState(null); // non-null while RAG retrieval is in progress
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sessionList, setSessionList] = useState(() => getAllSessions());
+  const [attachedImage, setAttachedImage] = useState(null); // base64 data URL for pasted image
   // rename state: { id, value } | null
   const [renaming, setRenaming] = useState(null);
   // context menu state: { id, x, y } | null
@@ -226,7 +214,9 @@ export default function ChatPage() {
           if (!line.trim()) continue;
           try {
             const evt = JSON.parse(line);
-            if (evt.type === 'tool_call') {
+            if (evt.type === 'thinking') {
+              setRagQuery('思考中…');
+            } else if (evt.type === 'tool_call') {
               setRagQuery(evt.query || '...');
             } else if (evt.type === 'delta') {
               setRagQuery(null);
@@ -257,68 +247,76 @@ export default function ChatPage() {
     ]);
   }
 
-  async function sendImage(userText) {
-    const t0 = Date.now();
-    const placeholder = { role: 'assistant', type: 'text', content: '🎨 Generating image…', timestamp: new Date().toISOString() };
-    appendMessage(placeholder);
+  // ── Image generation (DISABLED) ──────────────────────────────────────────
+  // async function sendImage(userText) {
+  //   const t0 = Date.now();
+  //   const placeholder = { role: 'assistant', type: 'text', content: '🎨 Generating image…', timestamp: new Date().toISOString() };
+  //   appendMessage(placeholder);
+  //   const history = [...messages].flatMap((m) => {
+  //     if (m.role === 'user' && m.type === 'text' && m.content) return [{ role: 'user', content: m.content }];
+  //     if (m.role === 'assistant' && m.type === 'text' && m.content) return [{ role: 'assistant', content: m.content }];
+  //     return [];
+  //   });
+  //   let assistantMsg;
+  //   try {
+  //     const res = await fetch(`${API_BASE}/chat/image`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: userText, history }) });
+  //     if (!res.ok) { const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` })); throw new Error(err.detail || `HTTP ${res.status}`); }
+  //     const data = await res.json();
+  //     assistantMsg = { role: 'assistant', type: 'image', content: data.b64, timestamp: new Date().toISOString(), durationMs: Date.now() - t0 };
+  //     updateLastAssistant(assistantMsg);
+  //   } catch (err) {
+  //     assistantMsg = { role: 'assistant', type: 'error', content: err.message, timestamp: new Date().toISOString(), durationMs: Date.now() - t0 };
+  //     updateLastAssistant(assistantMsg);
+  //   }
+  //   persistSession([{ role: 'user', type: 'text', content: userText, timestamp: new Date().toISOString() }, assistantMsg]);
+  // }
 
-    // Build text-only history for context (skip previous images to save tokens)
-    const history = [...messages].flatMap((m) => {
-      if (m.role === 'user' && m.type === 'text' && m.content) return [{ role: 'user', content: m.content }];
-      if (m.role === 'assistant' && m.type === 'text' && m.content) return [{ role: 'assistant', content: m.content }];
-      return [];
-    });
-
-    let assistantMsg;
-    try {
-      const res = await fetch(`${API_BASE}/chat/image`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: userText, history }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-        throw new Error(err.detail || `HTTP ${res.status}`);
+  function handlePaste(e) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        const reader = new FileReader();
+        reader.onload = (ev) => setAttachedImage(ev.target.result);
+        reader.readAsDataURL(file);
+        break;
       }
-      const data = await res.json();
-      assistantMsg = { role: 'assistant', type: 'image', content: data.b64, timestamp: new Date().toISOString(), durationMs: Date.now() - t0 };
-      updateLastAssistant(assistantMsg);
-    } catch (err) {
-      assistantMsg = { role: 'assistant', type: 'error', content: err.message, timestamp: new Date().toISOString(), durationMs: Date.now() - t0 };
-      updateLastAssistant(assistantMsg);
     }
-
-    persistSession([
-      { role: 'user', type: 'text', content: userText, timestamp: new Date().toISOString() },
-      assistantMsg,
-    ]);
   }
 
   async function handleSend() {
     const text = input.trim();
-    if (!text || loading) return;
+    if ((!text && !attachedImage) || loading) return;
     setInput('');
     setLoading(true);
 
-    const userMsg = { role: 'user', type: 'text', content: text, timestamp: new Date().toISOString() };
+    const userMsg = {
+      role: 'user',
+      type: 'text',
+      content: text,
+      imageData: attachedImage || null,
+      timestamp: new Date().toISOString(),
+    };
     appendMessage(userMsg);
+    setAttachedImage(null);
 
-    if (isImageRequest(text)) {
-      await sendImage(text);
-    } else {
-      const history = [...messages, userMsg].flatMap((m) => {
-        if (m.role === 'user') return [{ role: 'user', content: m.content }];
-        if (m.type === 'text' && m.content) return [{ role: 'assistant', content: m.content }];
-        if (m.type === 'image' && m.content) {
-          return [{
-            role: 'assistant',
-            content: [{ type: 'image_url', image_url: { url: `data:image/png;base64,${m.content}` } }],
-          }];
+    const history = [...messages, userMsg].flatMap((m) => {
+      if (m.role === 'user') {
+        if (m.imageData) {
+          const parts = [];
+          if (m.content) parts.push({ type: 'text', text: m.content });
+          parts.push({ type: 'image_url', image_url: { url: m.imageData } });
+          return [{ role: 'user', content: parts }];
         }
-        return [];
-      });
-      await sendText(text, history);
-    }
+        return [{ role: 'user', content: m.content }];
+      }
+      if (m.type === 'text' && m.content) return [{ role: 'assistant', content: m.content }];
+      return [];
+    });
+
+    await sendText(text || '请描述这张图片', history);
 
     setLoading(false);
     inputRef.current?.focus();
@@ -486,7 +484,7 @@ export default function ChatPage() {
             <div className="chat-empty">
               <p>Start a conversation.</p>
               <p className="chat-empty__hint">
-                Type a message to chat · Include "draw" or "image" to generate a picture.
+                Type a message to chat · Paste images (Ctrl+V) to discuss them with AI.
               </p>
             </div>
           )}
@@ -504,23 +502,32 @@ export default function ChatPage() {
 
         {/* ── Input bar ── */}
         <div className="chat-inputbar">
-          <textarea
-            ref={inputRef}
-            className="chat-input"
-            placeholder="Message… (Shift+Enter for newline)"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            rows={2}
-            disabled={loading}
-          />
-          <button
-            className="chat-btn chat-btn--send"
-            onClick={handleSend}
-            disabled={loading || !input.trim()}
-          >
-            {loading ? '…' : '↑'}
-          </button>
+          {attachedImage && (
+            <div className="chat-image-preview">
+              <img src={attachedImage} alt="attached" />
+              <button className="chat-image-preview__remove" onClick={() => setAttachedImage(null)}>✕</button>
+            </div>
+          )}
+          <div className="chat-inputbar__row">
+            <textarea
+              ref={inputRef}
+              className="chat-input"
+              placeholder="Message… (Shift+Enter for newline, Ctrl+V to paste image)"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              rows={2}
+              disabled={loading}
+            />
+            <button
+              className="chat-btn chat-btn--send"
+              onClick={handleSend}
+              disabled={loading || (!input.trim() && !attachedImage)}
+            >
+              {loading ? '…' : '↑'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
