@@ -199,21 +199,21 @@ def export_to_docx(image_b64: str, node_details: dict, overall_description: str 
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     # --- AI-generated diagram (placed at the very top) ---
-    print("🖼️  Generating AI diagram for export...")
-    ai_image_b64 = generate_diagram_image(node_details)
-    if ai_image_b64:
-        doc.add_heading("1. AI-Generated Architecture Diagram", level=1)
-        try:
-            ai_image_data = base64.b64decode(ai_image_b64)
-            ai_image_stream = BytesIO(ai_image_data)
-            doc.add_picture(ai_image_stream, width=Inches(6.0))
-            doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
-        except Exception as e:
-            doc.add_paragraph(f"[Error rendering AI diagram: {str(e)}]")
-        doc.add_paragraph("")
-    else:
-        doc.add_heading("1. AI-Generated Architecture Diagram", level=1)
-        doc.add_paragraph("[AI diagram generation skipped or failed]")
+    # print("🖼️  Generating AI diagram for export...")
+    # ai_image_b64 = generate_diagram_image(node_details)
+    # if ai_image_b64:
+    #     doc.add_heading("1. AI-Generated Architecture Diagram", level=1)
+    #     try:
+    #         ai_image_data = base64.b64decode(ai_image_b64)
+    #         ai_image_stream = BytesIO(ai_image_data)
+    #         doc.add_picture(ai_image_stream, width=Inches(6.0))
+    #         doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+    #     except Exception as e:
+    #         doc.add_paragraph(f"[Error rendering AI diagram: {str(e)}]")
+    #     doc.add_paragraph("")
+    # else:
+    #     doc.add_heading("1. AI-Generated Architecture Diagram", level=1)
+    #     doc.add_paragraph("[AI diagram generation skipped or failed]")
 
     # Overall Description
     if overall_description:

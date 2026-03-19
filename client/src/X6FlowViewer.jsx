@@ -192,9 +192,8 @@ function runRoleLayout(nodes, edges) {
   const levelMap = computeProcessingLevels(topNodes, edges, childToParent);
   // data lane sits at the top as a horizontal row; other lanes stack vertically in columns below
   const laneOrder = { data: 0, input: 1, processing: 2, output: 3, unknown: 4 };
-  const colLaneX = { input: 80, processing: 500, output: 960, unknown: 730 };
-  const rowGap = 90;
-  const colGap = 60;
+  const colLaneX = { input: 80, processing: 560, output: 1120, unknown: 840 };
+  const rowGap = 100;
   const childGap = 16;
   const DATA_TOP = 40;
   const DATA_NODE_GAP = 40;
@@ -287,10 +286,7 @@ function runRoleLayout(nodes, edges) {
 
   ordered.filter(n => n.lane !== 'data').forEach(n => {
     const lane = n.lane || 'unknown';
-    const level = levelMap[n.id] || 0;
-    // processing nodes offset slightly right per level to show depth, capped to avoid overlap
-    const maxOffset = (colLaneX['output'] - colLaneX['processing'] - GROUP_W - colGap);
-    const x = (colLaneX[lane] ?? colLaneX.unknown) + (lane === 'processing' ? Math.min(level * 30, Math.max(0, maxOffset)) : 0);
+    const x = colLaneX[lane] ?? colLaneX.unknown;
     const { w, h, overlayTop } = nodeDims[n.id];
     positions[n.id] = { x, y: laneY[lane], w, h, overlayTop };
     laneY[lane] += h + rowGap;
@@ -816,21 +812,43 @@ function renderGraph(graph, nodeDetails) {
     }
   });
 
-  // Edges — track parallel edges between the same node pair to offset them apart
+  // Edges — spread edges sharing the same source or same target to avoid overlap
   const pairCount = {};
   const pairIndex = {};
+  const srcCount = {};
+  const srcIndex = {};
+  const tgtCount = {};
+  const tgtIndex = {};
   parsedEdges.forEach(e => {
     const key = `${e.source}||${e.target}`;
     pairCount[key] = (pairCount[key] || 0) + 1;
+    srcCount[e.source] = (srcCount[e.source] || 0) + 1;
+    tgtCount[e.target] = (tgtCount[e.target] || 0) + 1;
   });
   parsedEdges.forEach((e) => {
     const key = `${e.source}||${e.target}`;
     const total = pairCount[key] || 1;
     const pi = pairIndex[key] || 0;
     pairIndex[key] = pi + 1;
-    // Spread parallel edges: offsets like 0, -20, 20, -40, 40 …
-    const spreadStep = 22;
+
+    const si = srcIndex[e.source] || 0;
+    srcIndex[e.source] = si + 1;
+    const ti = tgtIndex[e.target] || 0;
+    tgtIndex[e.target] = ti + 1;
+
+    // Spread parallel edges (same src+tgt pair)
+    const spreadStep = 24;
     const parallelOffset = total === 1 ? 0 : (pi - (total - 1) / 2) * spreadStep;
+
+    // For edges sharing the same source, stagger exit point vertically
+    const srcTotal = srcCount[e.source] || 1;
+    const srcStep = 18;
+    const srcOffset = srcTotal === 1 ? 0 : (si - (srcTotal - 1) / 2) * srcStep;
+
+    // For edges sharing the same target, stagger entry point vertically
+    const tgtTotal = tgtCount[e.target] || 1;
+    const tgtStep = 18;
+    const tgtOffset = tgtTotal === 1 ? 0 : (ti - (tgtTotal - 1) / 2) * tgtStep;
 
     const labels = e.label
       ? [{
@@ -857,11 +875,14 @@ function renderGraph(graph, nodeDetails) {
       }]
       : [];
     graph.addEdge({
-      id: e.id, source: e.source, target: e.target, dashed: e.dashed, zIndex: 2,
+      id: e.id,
+      source: { cell: e.source, anchor: { name: 'center', args: { dy: srcOffset } } },
+      target: { cell: e.target, anchor: { name: 'center', args: { dy: tgtOffset } } },
+      dashed: e.dashed, zIndex: 2,
       router: {
         name: 'manhattan',
         args: {
-          padding: { top: 24, bottom: 24, left: 24, right: 24 },
+          padding: { top: 40, bottom: 40, left: 48, right: 48 },
           startDirections: ['top', 'bottom', 'left', 'right'],
           endDirections: ['top', 'bottom', 'left', 'right'],
         },
@@ -1134,7 +1155,7 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
       } catch (e) { void e; }
       emitNodeDetailsChange(g);
     });
-    graph.on('edge:added', ({ edge }) => {
+    graph.on('edge:connected', ({ edge }) => {
       if (isRenderingRef.current) return;
       const has = edge.getLabels?.() && edge.getLabels().length > 0;
       if (!has) {

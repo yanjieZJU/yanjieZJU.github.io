@@ -12,6 +12,30 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
+const API_BASE = import.meta.env.DEV ? 'http://localhost:8000' : '/api';
+
+// Extract top N processing modules from node_details for plan preview
+function getProcessingModules(nodeDetails, maxCount = 3) {
+  if (!nodeDetails) return [];
+  const entries = Array.isArray(nodeDetails)
+    ? nodeDetails.map(m => [m.id || m.name, m])
+    : Object.entries(nodeDetails);
+  const processing = entries
+    .map(([, m]) => m)
+    .filter(m => {
+      const role = String(m.role || '').toLowerCase();
+      return role.includes('processing') || role.includes('core') || role.includes('inference') || role.includes('reasoning');
+    });
+  return processing.slice(0, maxCount).map(m => m.name || m.id || '');
+}
+
+// Get first sentence of a description string
+function firstSentence(text) {
+  if (!text) return '';
+  const m = String(text).match(/^[^。！？.!?]+[。！？.!?]?/);
+  return m ? m[0].trim() : String(text).slice(0, 60);
+}
+
 // 初始节点
 const initialNodes = [];
 const initialEdges = [];
@@ -96,6 +120,7 @@ function App() {
 
   // 添加测试
   const [testJsonStr, setTestJsonStr] = useState('');
+  const [planThumbnails, setPlanThumbnails] = useState({});
 
   const handleTestJson = () => {
     try {
@@ -431,7 +456,8 @@ function App() {
 
 
   const handleGenerate = async () => {
-    if (!description && nodes.length === 0) return;
+    console.log('[DEBUG] handleGenerate called, description:', description, 'nodes:', nodes.length);
+    if (!description && nodes.length === 0) { console.log('[DEBUG] early return — empty'); return; }
     setLoading(true);
     setProgress(0);
     setPlans([]);
@@ -471,7 +497,8 @@ function App() {
         }
       });
 
-      const response = await fetch('http://localhost:8000/generate', {
+      console.log('[DEBUG] about to fetch, API_BASE:', API_BASE);
+      const response = await fetch(`${API_BASE}/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -581,7 +608,7 @@ function App() {
       // Clear input immediately
       setModificationInput('');
 
-      const response = await fetch('http://localhost:8000/edit', {
+      const response = await fetch(`${API_BASE}/edit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -890,7 +917,7 @@ function App() {
       const currentPlan = plans[activePlanIndex];
 
       // 2. Fetch the /export endpoint
-      const response = await fetch('http://localhost:8000/export', {
+      const response = await fetch(`${API_BASE}/export`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -938,7 +965,7 @@ function App() {
         },
         original_query: description
       };
-      const res = await fetch('http://localhost:8000/sessions/save', {
+      const res = await fetch(`${API_BASE}/sessions/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -995,7 +1022,7 @@ function App() {
       const params = new URLSearchParams();
       params.set('session_id', sessionId.trim() || 'anonymous_session');
       if (currentPlan.plan_id) params.set('plan_id', currentPlan.plan_id);
-      const res = await fetch(`http://localhost:8000/sessions/revert?${params.toString()}`);
+      const res = await fetch(`${API_BASE}/sessions/revert?${params.toString()}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || '无法回退');
       const p = data.plan;
@@ -1025,6 +1052,22 @@ function App() {
   };
 
   const activePlan = plans[activePlanIndex] || null;
+
+  // Capture thumbnail for a plan after its diagram renders
+  const captureThumbnail = useCallback(async (index) => {
+    if (!resultFlowRef.current) return;
+    try {
+      const dataUrl = await resultFlowRef.current.exportImage();
+      setPlanThumbnails(prev => ({ ...prev, [index]: dataUrl }));
+    } catch (e) { void e; }
+  }, []);
+
+  // Capture thumbnail when active plan changes (after a short delay for render)
+  useEffect(() => {
+    if (plans.length === 0) return;
+    const timer = setTimeout(() => captureThumbnail(activePlanIndex), 800);
+    return () => clearTimeout(timer);
+  }, [activePlanIndex, plans.length, captureThumbnail]);
   const otherPlans = plans
     .map((plan, index) => ({ plan, index }))
     .filter((item) => item.index !== activePlanIndex);
@@ -1324,7 +1367,7 @@ function App() {
                       fontWeight: 'bold',
                       color: '#217cf3',
                       whiteSpace: 'nowrap',
-                      flexShrink: 0
+                      flexShrink: 0,
                     }}
                   >
                     {activePlan.perspective || `方案 ${activePlanIndex + 1}`}
@@ -1334,9 +1377,7 @@ function App() {
                 )}
                 {otherPlans.length > 0 && (
                   <div
-                    onClick={() => {
-                      setIsMorePerspectivesOpen((prev) => !prev);
-                    }}
+                    onClick={() => setIsMorePerspectivesOpen((prev) => !prev)}
                     style={{
                       padding: '8px 12px',
                       cursor: 'pointer',
@@ -1346,7 +1387,8 @@ function App() {
                       backgroundColor: isMorePerspectivesOpen ? '#eaf2ff' : '#fff',
                       color: '#3e4a5a',
                       whiteSpace: 'nowrap',
-                      flexShrink: 0
+                      flexShrink: 0,
+                      fontSize: '13px',
                     }}
                   >
                     {`查看更多视角（+${otherPlans.length}）`}
@@ -1438,38 +1480,48 @@ function App() {
                   borderRadius: '8px',
                   backgroundColor: '#fff'
                 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '8px' }}>
-                    {otherPlans.map(({ plan, index }) => (
-                      <div
-                        key={index}
-                        onClick={() => {
-                          setActivePlanIndex(index);
-                          setIsMorePerspectivesOpen(false);
-                        }}
-                        style={{
-                          border: '1px solid #e8edf5',
-                          borderRadius: '6px',
-                          padding: '8px 10px',
-                          cursor: 'pointer',
-                          backgroundColor: '#f9fbff'
-                        }}
-                      >
-                        <div style={{ fontWeight: 600, color: '#2a3550', marginBottom: '4px', fontSize: '13px' }}>
-                          {plan.perspective || `方案 ${index + 1}`}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '10px' }}>
+                    {otherPlans.map(({ plan, index }) => {
+                      const mods = getProcessingModules(plan.node_details ?? plan.module_details);
+                      const thumb = planThumbnails[index];
+                      return (
+                        <div
+                          key={index}
+                          onClick={() => { setActivePlanIndex(index); setIsMorePerspectivesOpen(false); }}
+                          style={{
+                            border: '1px solid #e8edf5',
+                            borderRadius: '8px',
+                            padding: '10px',
+                            cursor: 'pointer',
+                            backgroundColor: '#f9fbff',
+                            transition: 'box-shadow 0.15s, border-color 0.15s',
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 2px 10px rgba(33,124,243,0.15)'; e.currentTarget.style.borderColor = '#a8c8f8'; }}
+                          onMouseLeave={e => { e.currentTarget.style.boxShadow = ''; e.currentTarget.style.borderColor = '#e8edf5'; }}
+                        >
+                          <div style={{ fontWeight: 600, color: '#2a3550', marginBottom: '3px', fontSize: '13px' }}>
+                            {plan.perspective || `方案 ${index + 1}`}
+                          </div>
+                          <div style={{ color: '#596579', fontSize: '11px', lineHeight: 1.4, marginBottom: mods.length ? 5 : 0 }}>
+                            {firstSentence(plan.overall_description || plan.description)}
+                          </div>
+                          {mods.length > 0 && (
+                            <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginBottom: 8 }}>
+                              {mods.map(m => (
+                                <span key={m} style={{ fontSize: '10px', background: '#fff4df', color: '#9a6700', border: '1px solid #f59e0b', borderRadius: 3, padding: '1px 5px', whiteSpace: 'nowrap' }}>{m}</span>
+                              ))}
+                            </div>
+                          )}
+                          {thumb ? (
+                            <img src={thumb} alt="方案预览" style={{ width: '100%', height: 'auto', borderRadius: 5, border: '1px solid #e0e7f0', display: 'block' }} />
+                          ) : (
+                            <div style={{ width: '100%', height: 80, background: '#f0f4fa', borderRadius: 5, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#aaa', fontSize: 11 }}>
+                              预览加载中…
+                            </div>
+                          )}
                         </div>
-                        <div style={{
-                          color: '#596579',
-                          fontSize: '12px',
-                          lineHeight: 1.4,
-                          overflow: 'hidden',
-                          display: '-webkit-box',
-                          WebkitLineClamp: 3,
-                          WebkitBoxOrient: 'vertical'
-                        }}>
-                          {plan.overall_description || plan.description || '暂无摘要'}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}

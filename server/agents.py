@@ -715,6 +715,7 @@ class IntegratorAgent:
         - Keep retrieval-grounded technical content unchanged in meaning.
         - User-facing textual fields in final JSON should be primarily in Chinese.
         - Proper nouns and necessary technical terms may remain in English.
+        - Use words that non-technical users can easily understand, and avoid complex technical terms (except for those necessary in the explanation of the technology)
         ### Steps and Rules 
         1. **Define the main storyline**: Define a clear functional mainline based on the user's requirements and the provided perspective, and synthesize a detailed overall_description of the main storyline.
         2. **Define Modules**: Define all the necessary modules for this achitecture. Keep it concise, with a maximum of 6-8 key functional processing modules (input and output nodes are not considered as functional processing modules). Define inputs and outputs
