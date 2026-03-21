@@ -14,8 +14,9 @@ import hashlib
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import *
 from retriever_neo4j import (
-    load_stores, 
-    retrieve_and_get_content, 
+    get_vector_store,
+    get_graph_store,
+    retrieve_and_get_content,
     find_structural_path,
     run_with_retry,
     execute_read_with_session
@@ -380,9 +381,10 @@ class PlannerAgent:
         1. When you add new functions, always consider its *feasibility* in the given context.
         2. **Base Anchors Preservation**:
            - **CRITICAL**: The existing Base Anchors represent the core of the system. Your divergent plans MUST acknowledge them, build upon them, and seamlessly integrate new functionalities with them across ALL plans.
-        3. **Incremental Only**: 
+        3. **Incremental Only**:
            - Do NOT output the existing Base Anchors in your array. Output ONLY the KEY and ADDITIONAL innovative components (modules). IF Base Anchors do NOT exist, extract the key components from the user's query and add them.
            - **CRITICAL**: Do NOT propose modules that are merely synonyms or simple rephrasings of Base Anchors (e.g., if "Tutor" exists, do not add "Instructor Agent"). New anchors must add **distinct and innovative new functionality**.
+           - **LIMIT**: Output at most **5** additional anchors per plan. Prioritize the most impactful and distinctive ones.
         4. **Specific Anchors**:
            - Each additional component must have a 'user_term', a 'description', a 'role', and a 'community_id' (from the reference source).
            - Recheck data flow logic.
@@ -411,29 +413,33 @@ class PlannerAgent:
         """
         # print(prompt)
         print(f"\n🧠 Generating {num_outputs} divergent plans...")
-        try:
-            response = self.client.chat.completions.create(
-                # model="gpt-4o-2024-11-20",
-                model = "gpt-5.2-chat-latest",
-
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.9, # Higher temperature for creativity
-                response_format={"type": "json_object"},
-            ).choices[0].message.content
-            
-            # print(f"LLM Response: {str(response)}")
-            result = json.loads(response)
-            plans = result.get("plans", [])
-            
-            # Validate output count
-            if len(plans) < num_outputs:
-                print(f"⚠️ Warning: LLM generated {len(plans)} plans, requested {num_outputs}.")
-            
-            return plans[:num_outputs]
-
-        except Exception as e:
-            print(f"❌ Error in divergent planning: {e}")
-            return []
+        import time
+        last_err = None
+        for _attempt in range(3):
+            try:
+                response = self.client.chat.completions.create(
+                    model=CHAT_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.9,
+                    response_format={"type": "json_object"},
+                ).choices[0].message.content
+                result = json.loads(response)
+                plans = result.get("plans", [])
+                # Hard cap: at most 4 additional_anchors per plan to prevent retrieval explosion
+                for plan in plans:
+                    anchors = plan.get("additional_anchors", [])
+                    if len(anchors) > 5:
+                        print(f"⚠️ Trimming additional_anchors from {len(anchors)} to 4")
+                        plan["additional_anchors"] = anchors[:4]
+                if len(plans) < num_outputs:
+                    print(f"⚠️ Warning: LLM generated {len(plans)} plans, requested {num_outputs}.")
+                return plans[:num_outputs]
+            except Exception as e:
+                last_err = e
+                print(f"❌ Error in divergent planning (attempt {_attempt+1}): {e}")
+                if _attempt < 2:
+                    time.sleep(3 * (_attempt + 1))
+        return []
 
         
         
@@ -499,54 +505,116 @@ class RetrieverAgent:
                     print(f"Structural path retrieval generated an exception: {exc}")
 
         return structural_hints
-    
-    # def rerank_with_llm(self, query, retrieved_skeletons):
-    #     if not retrieved_skeletons: return []
-    #     candidates_text = ""
-    #     for i, node in enumerate(retrieved_skeletons):
-    #         content_preview = node.node.text[:500].replace("\n", " ")
-    #         candidates_text += f"--- Candidate {i} ---\n {content_preview}\n\n"
-    #     prompt = f"""
-    #     ##TASK:
-    #     Identify the SINGLE candidate from the list below that BEST matches the user's specific requirements.
 
-    #     ##CRITERIA:
-    #     1. The candidate must be the most relevant to the user's requirements.
-    #     2. The candidate must be the most complete to include the specific nodes mentioned in the user's query.
 
-    #     ##Candidates:
-    #     {candidates_text}
+def _expand_compact_ports(response_str):
+    """
+    Convert compact port strings back to the full object format expected by
+    ConflictSolver and the frontend.
 
-    #     ##User Query:
-    #     {query}
+    Compact formats:
+      incoming:      "SourceMod->label"  or  "SourceMod.SubNode->label"
+      outgoing:      "TargetMod->label"  or  "TargetMod.SubNode->label"
+      internal_flow: "SubA->SubB->label"
+    """
+    if not response_str:
+        return response_str
+    try:
+        data = json.loads(response_str)
+    except Exception:
+        return response_str
 
-    #     ##Output Format:
-    #     Return the top 3 indices of the best candidates in order of preference (e.g., "1, 2, 0").
+    modules = data.get("module_details", [])
+    if isinstance(modules, dict):
+        modules = list(modules.values())
 
-    #     """
-    #     try:
-    #         response = self.client.chat.completions.create(
-    #             model="gpt-4o-mini",
-    #             messages=[{"role": "user", "content": prompt}],
-    #             temperature=0,
-    #         ).choices[0].message.content
-    #         indices = [int(x.strip()) for x in response.split(",") if x.strip().isdigit()]
-    #         valid_skeletons = []
-    #         for i in indices:
-    #             if 0 <= i < len(retrieved_skeletons):
-    #                 valid_skeletons.append(retrieved_skeletons[i])
+    for mod in modules:
+        ports = mod.get("ports")
+        if not isinstance(ports, dict):
+            continue
 
-    #         if len(valid_skeletons) < 3:
-    #             remaining_indices = [idx for idx in range(len(retrieved_skeletons)) if idx not in indices]
-    #             for idx in remaining_indices:
-    #                 if len(valid_skeletons) < 3:
-    #                     valid_skeletons.append(retrieved_skeletons[idx])
+        # --- incoming ---
+        raw_in = ports.get("incoming", [])
+        expanded_in = []
+        for item in raw_in:
+            if isinstance(item, dict):
+                expanded_in.append(item)
+                continue
+            if not isinstance(item, str):
+                continue
+            # split on last "->" to get label
+            arrow = item.rfind('->')
+            if arrow == -1:
+                continue
+            src_part = item[:arrow].strip()
+            label = item[arrow+2:].strip()
+            if '.' in src_part:
+                src_mod, src_node = src_part.split('.', 1)
+            else:
+                src_mod, src_node = src_part, None
+            expanded_in.append({
+                "source_mod": src_mod.strip(),
+                "source_node": src_node.strip() if src_node else None,
+                "connects_to_internal_node": None,
+                "edge_label": label
+            })
+        ports["incoming"] = expanded_in
 
-    #         return valid_skeletons
-            
-    #     except Exception as e:
-    #         print(f"Error: {e}")
-    #         return None
+        # --- outgoing ---
+        raw_out = ports.get("outgoing", [])
+        expanded_out = []
+        for item in raw_out:
+            if isinstance(item, dict):
+                expanded_out.append(item)
+                continue
+            if not isinstance(item, str):
+                continue
+            arrow = item.rfind('->')
+            if arrow == -1:
+                continue
+            tgt_part = item[:arrow].strip()
+            label = item[arrow+2:].strip()
+            if '.' in tgt_part:
+                tgt_mod, tgt_node = tgt_part.split('.', 1)
+            else:
+                tgt_mod, tgt_node = tgt_part, None
+            expanded_out.append({
+                "target_mod": tgt_mod.strip(),
+                "target_node": tgt_node.strip() if tgt_node else None,
+                "originates_from_internal_node": None,
+                "edge_label": label
+            })
+        ports["outgoing"] = expanded_out
+
+        # --- internal_flow ---
+        raw_flow = ports.get("internal_flow", [])
+        expanded_flow = []
+        for item in raw_flow:
+            if isinstance(item, dict):
+                expanded_flow.append(item)
+                continue
+            if not isinstance(item, str):
+                continue
+            # format: "SubA->SubB->label"  (first two arrows are node separators)
+            parts = item.split('->')
+            if len(parts) >= 3:
+                src_node = parts[0].strip()
+                tgt_node = parts[1].strip()
+                label = '->'.join(parts[2:]).strip()
+            elif len(parts) == 2:
+                src_node = parts[0].strip()
+                tgt_node = parts[1].strip()
+                label = ""
+            else:
+                continue
+            expanded_flow.append({
+                "source_node": src_node,
+                "target_node": tgt_node,
+                "edge_label": label
+            })
+        ports["internal_flow"] = expanded_flow
+
+    return json.dumps(data, ensure_ascii=False)
 
 
 class IntegratorAgent:
@@ -659,135 +727,106 @@ class IntegratorAgent:
         for anchor, nodes in retrieved_info.items():
             slim_nodes = []
             for n in nodes:
+                raw_content = n.get('text', '')
+                # Truncate long content — LLM only needs the key idea, not full text
+                content = raw_content[:800] + '…' if len(raw_content) > 800 else raw_content
                 node_data = {
                     "module": n.get('metadata', {}).get('name', 'Unknown'),
-                    "content": n.get('text', '')
+                    "content": content
                 }
-                
-                # If this is an added node, explicitly preserve its topology 
+
+                # If this is an added node, explicitly preserve its topology
                 if anchor in added_keys:
-                    # Try to get raw topology from metadata as a cleaner signal
                     raw_topo = n.get('structural_path', None)
-                    if not raw_topo: 
+                    if not raw_topo:
                         raw_topo = n.get('metadata', {}).get('topology', None)
-                        
                     if raw_topo:
-                        # Simplify topology data to avoid huge dumps
-                        simplified_topo = {
+                        node_data["structural_context"] = {
                             "upstream": [u['name'] for u in raw_topo.get('upstream', [])],
                             "downstream": [d['name'] for d in raw_topo.get('downstream', [])]
                         }
-                        node_data["structural_context"] = simplified_topo
-                
+
                 slim_nodes.append(node_data)
             slim_retrieved_info[anchor] = slim_nodes
 
         prompt = f"""
-        You are a professional designer and architect in the field of HCI. Design a *complete and detailed* pipeline to meet the user's requirements.
-        
-        ## User Requirements
-        User Query: ```{query}```
-        
-        ## Base Anchors (MANDATORY)
-        The following Base Anchors were explicitly requested by the user. **You MUST include ALL of these modules in your final pipeline architecture.** You can modify its name, details, and implementation method, but please retain the main functions as requested by the users. Do not drop them under any circumstances.
-        Base Anchors: ```{json.dumps(base_anchors, ensure_ascii=False) if base_anchors else "None provided"}```
-        \n\n
-        ## Retrieved Information
-        You have the following sources of information. Use them according to the rules.
-        1. **Retrieved Modules**: 
-            - These are modules extracted from the domain-specific literature that are similar to each conceptual step. Their descriptions include their functions and specific technical methods.
-            - Refer to them to fill in the technical implementation of these specific nodes. But you SHOULD abstract away the original paper context (such as the nameing of the module in the article). Translate the core technical concepts into generic terms and tightly fuse them with the user's specific scenario. The generated explanations should feel like a native, tailored solution to the user's problem.
-            - Each conceptual step may have retrieved multiple nodes with similar functions. You need to conduct appropriate screening or combination to be able to assemble a complete process.
-        2. **Structural Paths**: 
-            - These are retrieved data flow connections between conceptual steps derived from the user's requirements.
-            - **CRITICAL**: Use them as the ground truth to determine HOW the user's nodes should be connected. Do not invent arbitrary connections if a structural path already defines them.
-            - If the paths suggest the need for an intermediate node (e.g., Sensor -> [Buffer] -> LLM), then such a node MUST be added to connect the Base Anchors logically.
+You are a professional HCI system architect. Design a complete pipeline for the user's requirements.
 
-        ## Data Sources
-        {extension_context}
+## User Requirements
+{query}
 
-        Retrieved Modules: ```{json.dumps(slim_retrieved_info, ensure_ascii=False, indent=2)}```\n\n
-        Structural Paths: ```{hints_text}```\n\n
-        
-        ## TASK
-        Conceive the complete data link and functional architecture, and ultimately synthesize a cohesive flowchart/architecture diagram.
-        ## Language Policy
-        - Keep retrieval-grounded technical content unchanged in meaning.
-        - User-facing textual fields in final JSON should be primarily in Chinese.
-        - Proper nouns and necessary technical terms may remain in English.
-        - Use words that non-technical users can easily understand, and avoid complex technical terms (except for those necessary in the explanation of the technology)
-        ### Steps and Rules 
-        1. **Define the main storyline**: Define a clear functional mainline based on the user's requirements and the provided perspective, and synthesize a detailed overall_description of the main storyline.
-        2. **Define Modules**: Define all the necessary modules for this achitecture. Keep it concise, with a maximum of 6-8 key functional processing modules (input and output nodes are not considered as functional processing modules). Define inputs and outputs
-        First, consider all the modules that are necessary for the mainline, including the base anchors. 
-        Then, in addition to the main line, add supporting functional nodes. These nodes can be connected to the main line and derived from it, but they MUST NOT be completely independent of the main line.
-            - **Naming Rule**: Use concise, plain-language names that describe *what the node does*, not what it is. Avoid generic structural suffixes like "模块", "单元", "矩阵", "引擎", "系统", "组件", "层", "网络". Instead of "优先级解释展示单元" use "优先级解释"; instead of "动态优先级与资源决策模块" use "优先级动态分析"; instead of "任务特征抽取单元" use "任务特征提取". DO NOT directly copy wording from the paper. DO NOT use technical labels (such as parser, engine, neural network, etc.) or long implementation names (e.g. NOT "Gaze360: Physically Unconstrained...").
-            - Ensure the added nodes from the divergent plans are integrated meaningfully.
-            - **Provide detailed descriptions for both `function` and `technical_methods` from the retrieved information BUT DO NOT FABRICATE.** You must explicitly articulate the module's specific role, core responsibilities, and crucial importance within the overall system. Explain exactly HOW the technical methods work, process data, and why they were chosen, avoiding brief or vague summaries.
-            - If there are subnodes within the modules (based on the retrieved information and relevant to the current context), they should also be defined. Explicitly map out the intermediate processes and data flow within the module using subnodes so its internal logic is transparent.
-        3. **Connect the Flow**: Use the topology info to decide logical connections. 
-            - Ensure the architecture has a clear primary end-to-end flow across the core modules.
-            - Ensure new conceptual modules have meaningfully integrated into the base logic, but do not connect them to every possibly related module. A module only needs the minimum necessary connections to realize its functional role.
-            - Prefer module-level connections, unless a subnode is truly the key sender or receiver. ONLY use subnode-level external connections when the subnode is the actual locus of computation or decision and connecting at module level would hide an important mechanism.
-            - All the connections should be implemented from the modules defined above. Do not include any other nodes, especially when defining the source_mod and the target_mod in ports.
-            - **Graph Cleaning**: Merge parallel edges between the same two nodes. Do not create 'shadow' nodes that duplicate existing functions. Ensure the graph is a single connected component if possible.
-            - If Module A usually follows Module B in Paper X, try to preserve that flow if it fits.
-        4. **Check the architecture**:
-            - REMOVE redundant nodes and connections (perform the same function even with different names).
-            - REMOVE or RECHECK any nodes that are isolated or unused.
-            - Favor a diagram that is readable and topologically coherent, rather than one with maximally dense connectivity.
-        
-        ### Final Output Structure (in JSON format)
+## Base Anchors (MANDATORY — include ALL)
+{json.dumps(base_anchors, ensure_ascii=False) if base_anchors else "None provided"}
+
+## Reference Material
+**Retrieved Modules** — ground `function`/`technical_methods` in these; abstract away paper names; merge similar nodes.
+**Structural Paths** — treat as ground truth for data-flow order.
+
+{extension_context}
+
+Retrieved Modules: {json.dumps(slim_retrieved_info, ensure_ascii=False)}
+
+Structural Paths: {hints_text}
+
+## Language Policy
+User-facing text: primarily Chinese; proper nouns/essential technical terms may stay in English.
+
+## Steps
+**1. Main Storyline** — define a clear end-to-end functional mainline; write it as `overall_description`.
+
+**2. Define Modules** — cover all mainline steps (including all Base Anchors) plus supporting nodes that connect to the mainline. Target 8–12 well-defined modules; completeness outweighs brevity.
+- **Naming**: action-oriented, no structural suffixes ("模块/单元/引擎/系统/组件/层"). ✓ "优先级动态分析" ✗ "动态优先级与资源决策模块". No paper titles or algorithm names as node names.
+- **Information nodes** (for key data artifacts central to user understanding, e.g. "风险提示", "任务上下文"): name describes the information, not the process. Use sparingly — prefer function-oriented nodes for backend logic.
+- **Descriptions**: `function` and `technical_methods` must be detailed and grounded in retrieved info — no fabrication, no vague summaries. Explain HOW methods work and WHY they fit.
+- **Subnodes**: define them when retrieved info reveals meaningful internal steps; map their internal data flow explicitly.
+- Integrate all divergent-plan nodes meaningfully.
+
+**3. Connect the Flow**
+- Build a clear primary end-to-end flow; each module needs only its minimum necessary connections.
+- Default to module-level connections; use subnode-level only when the subnode is the true locus of computation and hiding it would obscure a key mechanism.
+- `source_mod` / `target_mod` must reference names defined in `module_details` — no phantom nodes.
+- Merge parallel edges between the same pair of nodes. Preserve literature-validated flow order where applicable.
+
+**4. Final Check**
+- Remove only true duplicates (same function AND same data flow endpoints).
+- Reconnect isolated nodes if possible; remove only if unreachable and content-free.
+
+
+## Output (JSON)
+Use compact string format for `ports` to save space:
+- `incoming`: "SourceMod->edge_label" or "SourceMod.srcSubNode->edge_label"
+- `outgoing`: "TargetMod->edge_label" or "TargetMod.tgtSubNode->edge_label"
+- `internal_flow`: "SubA->SubB->edge_label"
+
+{{
+    "overall_description": "...",
+    "module_details": [
         {{
-            "overall_description": "A concise, clear explanation of the overall system architecture, highlighting its mainline and innovation points",
-            "module_details": [
-                {{
-                    "name": "the module name",
-                    "brief_description": "A one-sentence concise explanation of the module's core functional role, meant directly for rendering on the visual node. Emphasize how it serves the current scenario without paper-specific jargon.",
-                    "function": "Detailed explanation of the module's function, its core responsibilities, and its crucial role and importance within the overall system architecture.",
-                    "technical_methods": "Detailed description of the specific algorithms, models, or technical methods used, including HOW they process data and why they are selected. You MUST abstract away the original paper context. ",
-                    "role": "choose from ["input", "output", "processing", "data"]",
-                    "references": "Exact names of the sourced modules from Retrieved Information, comma-separated. Use 'None' if not available.",
-                    "sub_nodes": [
-                        {{
-                            "name": "name of the subnode",
-                            "function": "Detailed description of the subnode's specific function, purpose, and contribution to its parent module.",
-                            "technical_methods": "Detailed description of the specific technical implementation and methods used by this subnode."
-                        }}
-                    ],
-                    "ports": {{
-                        "incoming": [
-                            {{
-                                "source_mod": "id of the source module",
-                                "source_node": "id of the source subnode (if applicable, else null)",
-                                "connects_to_internal_node": "id of the internal subnode (if applicable, else null)",
-                                "edge_label": "description of data/control flow"
-                            }}
-                        ],
-                        "outgoing": [
-                             {{
-                                "target_mod": "id of the target module",
-                                "target_node": "id of the target subnode (if applicable, else null)",
-                                "originates_from_internal_node": "id of the internal subnode (if applicable, else null)",
-                                "edge_label": "description of data/control flow"
-                            }}
-                        ],
-                        "internal_flow": [
-                           {{
-                                "source_node": "id of the internal source subnode",
-                                "target_node": "id of the internal target subnode",
-                                "edge_label": "description of data/control flow"
-                           }}
-                        ]
-                    }}
-                }}
-            ]
+            "name": "module name",
+            "brief_description": "one sentence, scenario-specific, no jargon",
+            "function": "detailed role and importance",
+            "technical_methods": "specific methods, HOW they work, WHY chosen",
+            "role": "input|output|processing|data",
+            "references": "exact names from Retrieved Modules or 'None'",
+            "sub_nodes": [{{"name":"...","function":"...","technical_methods":"..."}}],
+            "ports": {{
+                "incoming": ["ModA->数据标签", "ModB.SubX->控制信号"],
+                "outgoing": ["ModC->处理结果"],
+                "internal_flow": ["SubA->SubB->中间数据"]
+            }}
         }}
-    """
+    ]
+}}
+"""
+        prompt_chars = len(prompt)
+        print(f"[integrate_arch] prompt size: {prompt_chars} chars (~{prompt_chars//4} tokens est)")
+        for anchor, nodes in slim_retrieved_info.items():
+            total_content = sum(len(n.get('content','')) for n in nodes)
+            print(f"  anchor '{anchor}': {len(nodes)} nodes, {total_content} content chars")
         try:
             response = self.client.chat.completions.create(
                 # model="gpt-4o-2024-11-20",
-                model = "gpt-5.2-chat-latest",
+                model = CHAT_MODEL,
 
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.8,
@@ -795,13 +834,29 @@ class IntegratorAgent:
             ).choices[0].message.content
         except Exception as e:
             print(f"Error: {e}")
-            return None
+            import time
+            for _retry in range(2):
+                time.sleep(3 * (_retry + 1))
+                try:
+                    print(f"Retrying integrate_arch (attempt {_retry + 2})...")
+                    response = self.client.chat.completions.create(
+                        model=CHAT_MODEL,
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.8,
+                        response_format={"type": "json_object"},
+                    ).choices[0].message.content
+                    break
+                except Exception as e2:
+                    print(f"Error (retry {_retry + 2}): {e2}")
+                    response = None
+            else:
+                return None
         try:
             print(response)
         except json.JSONDecodeError:
             print("Failed to parse JSON response.")
             return None
-        return response
+        return _expand_compact_ports(response)
 
     def refine_arch(self, original_query, current_arch, error_report):
         """
@@ -836,19 +891,21 @@ class IntegratorAgent:
 
         Return the FULLY CORRECTED JSON object.
         """
-        try:
-            response = self.client.chat.completions.create(
-                # model="gpt-4o-2024-11-20",
-                model = "gpt-5.2-chat-latest",
-
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1, # Lower temperature for precision fixes
-                response_format={"type": "json_object"},
-            ).choices[0].message.content
-            return response
-        except Exception as e:
-            print(f"Error checking integrity: {e}")
-            return current_arch
+        import time
+        for _attempt in range(3):
+            try:
+                response = self.client.chat.completions.create(
+                    model=CHAT_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1,
+                    response_format={"type": "json_object"},
+                ).choices[0].message.content
+                return response
+            except Exception as e:
+                print(f"Error checking integrity (attempt {_attempt+1}): {e}")
+                if _attempt < 2:
+                    time.sleep(3 * (_attempt + 1))
+        return current_arch
 
     def collect_references(self, arch_plan, retrieved_info):
         """
@@ -932,7 +989,7 @@ class EditorAgent:
     def __init__(self, client):
         self.client = client
         # self.model = "gpt-4o-2024-11-20"
-        self.model = "gpt-5.2-chat-latest"
+        self.model = CHAT_MODEL
 
     def edit_plan(self, current_plan, user_instruction, history_summary, retriever):
         """
@@ -1033,6 +1090,15 @@ class EditorAgent:
         - Do not alter plan structure rules or retrieval behavior because of language choice.
         - In final output, user-facing textual fields should be primarily in Chinese.
         - Proper nouns and indispensable technical terms may remain in English.
+
+        **Semantics Rule for Module and Subnodes**: 
+            - For functional modules, use concise, plain-language names that describe *what the node does*, not what it is. Avoid generic structural suffixes like "模块", "单元", "矩阵", "引擎", "系统", "组件", "层", "网络". Instead of "优先级解释展示单元" use "优先级解释"; instead of "动态优先级与资源决策模块" use "优先级动态分析"; instead of "任务特征抽取单元" use "任务特征提取". DO NOT directly copy wording from the paper. DO NOT use technical labels (such as parser, engine, neural network, etc.) or long implementation names (e.g. NOT "Gaze360: Physically Unconstrained...").
+            - A node can represent a key information unit when that information is central to user input, system output, or human understanding of the workflow. For these nodes, their name should describe the information being captured, organized or presented. Examples: "风险提示", "进度摘要", "任务上下文"; Avoid generic names such as "信息处理", "数据展示", "内容模块"
+               - Avoid creating information-oriented nodes for every minor label, attribute, or annotation.
+               - Prefer function-oriented nodes for backend processing, control, analysis, and transformation.
+            - Ensure the added nodes from the divergent plans are integrated meaningfully.
+            - **Provide detailed descriptions for both `function` and `technical_methods` from the retrieved information BUT DO NOT FABRICATE.** You must explicitly articulate the module's specific role, core responsibilities, and crucial importance within the overall system. Explain exactly HOW the technical methods work, process data, and why they were chosen, avoiding brief or vague summaries.
+            - If there are subnodes within the modules (based on the retrieved information and relevant to the current context), they should also be defined. Explicitly map out the intermediate processes and data flow within the module using subnodes so its internal logic is transparent.
         
         ## Modification Rules
         1. **Locality**: Only change what is requested.
@@ -1616,7 +1682,8 @@ class ConflictSolver:
     
 
 if __name__ == "__main__":
-    vector_store, graph_store = load_stores()
+    vector_store = get_vector_store()
+    graph_store = get_graph_store()
     planner = PlannerAgent(client, graph_store)
     user_query = "Design an LLM-based code education system for children"
     base_anchors = []

@@ -27,22 +27,24 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
     
     yield json.dumps({"type": "progress", "message": "Searching knowledge base...", "percent": 15}) + "\n"
 
-    # === Parallelize structural path retrieval + divergent planning (no dependency between them) ===
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _ex:
+    # === Parallelize ALL independent retrieval tasks upfront ===
+    # structural paths, divergent planning, AND base anchor retrieval have no mutual dependency
+    print(f"\n🎯 Launching parallel retrieval: structure paths + divergent planning + base anchors...")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as _ex:
         _fut_hints = _ex.submit(retriever.retrieve_structure_paths, user_relations)
         _fut_plans = _ex.submit(
             planner.divergent_planning, user_query, base_anchors, num_outputs
         ) if divergence else None
+        _fut_base  = _ex.submit(retriever.retrieve_for_module, base_anchors, 6, False)
         structural_hints = _fut_hints.result()
         divergent_plans  = _fut_plans.result() if _fut_plans else None
+        base_nodes_map   = _fut_base.result()
 
     if structural_hints:
         print(integrator.format_hints(structural_hints))
 
-    # === Step 1: Global Retrieval for Base Anchors (Higher Recall) ===
-    print(f"\n🎯 Retrieving Base Anchors (Top-6 for richer context)...")
     yield json.dumps({"type": "progress", "message": "Extracting domain knowledge and base nodes...", "percent": 35}) + "\n"
-    base_nodes_map = retriever.retrieve_for_module(base_anchors, top_k=6, include_topology=False)
+    print(f"\n🎯 Base anchor retrieval complete ({len(base_nodes_map)} anchors).")
     
     # Process base nodes into standard format
     base_ref_info = {}
@@ -61,44 +63,64 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
             })
         base_ref_info[anchor_name] = anchor_nodes
 
+    # === Pre-fetch additional anchors for ALL divergent plans in parallel ===
+    # This avoids a serial retrieval bottleneck inside the generation loop
+    additional_maps = {}  # index -> {anchor_name: [nodes]}
+    if divergent_plans:
+        def _fetch_additional(idx_plan):
+            idx, plan = idx_plan
+            anchors = plan.get("additional_anchors", [])
+            if not anchors:
+                return idx, {}
+            raw = retriever.retrieve_for_module(anchors, top_k=3, include_topology=True)
+            result = {}
+            for anchor_name, retrieved_list in raw.items():
+                result[anchor_name] = []
+                for node_with_score in retrieved_list:
+                    node = node_with_score.node
+                    result[anchor_name].append({
+                        'id': node.id_,
+                        'text': node.text,
+                        'score': node_with_score.score,
+                        'structural_path': node.metadata.get('topology', None),
+                        'metadata': dict(node.metadata)
+                    })
+            return idx, result
+
+        plans_to_fetch = [(i, p) for i, p in enumerate(divergent_plans)]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(plans_to_fetch) or 1) as _ex:
+            for idx, result in _ex.map(_fetch_additional, plans_to_fetch):
+                additional_maps[idx] = result
+        print(f"✅ Pre-fetched additional anchors for {len(additional_maps)} divergent plans.")
+
     # === Generate Options ===
     target_iterations = num_outputs if divergence else 1
-    
+
     for i in range(target_iterations):
-        
+
         current_ref_info = base_ref_info.copy()
-        
+
         d_plan = None
         # Apply Divergent Plan (if available)
         if divergent_plans and i < len(divergent_plans):
             d_plan = divergent_plans[i]
             print(f"\n{'='*60}")
             print(f"{d_plan}\n")
-        
+
         if d_plan:
             additional_anchors = d_plan.get("additional_anchors", [])
             perspective = d_plan.get("perspective", "Enhanced")
             rationale = d_plan.get("rationale", "")
-            
+
             print(f"Applying Divergent Perspective: {perspective}")
             print(f"Rationale: {rationale}")
-            
+
             additional_desc = f"**Perspective**: {perspective}\n**Rationale**: {rationale}\n\n"
-            
+
             if additional_anchors:
-                # Divergent anchors are new ideas, their topology is valuable context
-                additional_map = retriever.retrieve_for_module(additional_anchors, top_k=3, include_topology=True)
-                for anchor_name, retrieved_list in additional_map.items():
-                    current_ref_info[anchor_name] = []
-                    for node_with_score in retrieved_list:
-                        node = node_with_score.node
-                        current_ref_info[anchor_name].append({
-                            'id': node.id_,
-                            'text': node.text,
-                            'score': node_with_score.score,
-                            'structural_path': node.metadata.get('topology', None),
-                            'metadata': dict(node.metadata)
-                        })
+                # Use pre-fetched results
+                for anchor_name, nodes in additional_maps.get(i, {}).items():
+                    current_ref_info[anchor_name] = nodes
             else:
                 print(f"No additional anchors suggested for this plan")
         else:
@@ -193,7 +215,10 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
                         else:
                             details["reference"] = None
                         
-            except:
+            except Exception as _parse_err:
+                import traceback
+                print(f"❌ pipeline parse error: {_parse_err}")
+                traceback.print_exc()
                 module_details = {}
                 raw_desc = ""
                 used_ref = {}

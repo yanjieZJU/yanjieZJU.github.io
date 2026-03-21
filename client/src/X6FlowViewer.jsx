@@ -242,8 +242,8 @@ function runRoleLayout(nodes, edges) {
       });
       h = Math.max(160, childTop + childrenTotalH + 24);
     } else {
-      const titleLines = wrapTextToLines(titleText, innerW, 15, 'bold');
-      const descLines = wrapTextToLines(rawDesc, innerW, 13, 'normal');
+      const titleLines = wrapTextToLines(titleText, innerW, 17, 'bold');
+      const descLines = wrapTextToLines(rawDesc, innerW, 15, 'normal');
       const gap = 12;
       const titleH = Math.max(20, titleLines.length * 18);
       const descH = descLines.length > 0 ? Math.max(14, descLines.length * 16) : 0;
@@ -629,7 +629,7 @@ function renderGraph(graph, nodeDetails) {
     const iconText = icons.join(' ');
     const titleText = n.label;
     const innerW = Math.max(10, pos.w - 24);
-    const titleLines = wrapTextToLines(titleText, innerW, 14, 'bold');
+    const titleLines = wrapTextToLines(titleText, innerW, 16, 'bold');
     const rawDesc = (n.desc || '').replace(/\s+/g, ' ').trim();
     const descLines = wrapTextToLines(rawDesc, innerW, 12, 'normal');
     const titleH = Math.max(20, titleLines.length * 16);
@@ -640,7 +640,7 @@ function renderGraph(graph, nodeDetails) {
       id: n.id, shape: 'rect', x: pos.x, y: pos.y, width: pos.w, height: pos.h, zIndex: 0,
       attrs: {
         body: { fill: theme.fill, stroke: theme.stroke, strokeWidth: 2.2, strokeDasharray: '6 3', rx: 10, ry: 10 },
-        label: { text: '', fontSize: 14, fontWeight: 'bold', fill: theme.text, refX: 0.5, refY: 0.5, textAnchor: 'middle', textVerticalAnchor: 'middle' },
+        label: { text: '', fontSize: 16, fontWeight: 'bold', fill: theme.text, refX: 0.5, refY: 0.5, textAnchor: 'middle', textVerticalAnchor: 'middle' },
       },
       ports: portsDef(n.id, n.lane),
     });
@@ -655,7 +655,7 @@ function renderGraph(graph, nodeDetails) {
       zIndex: 5,
       attrs: {
         body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-        label: { text: titleLines.join('\n'), fontSize: 14, fontWeight: 'bold', fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
+        label: { text: titleLines.join('\n'), fontSize: 16, fontWeight: 'bold', fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
       },
       ports: { groups: {}, items: [] },
     });
@@ -669,7 +669,7 @@ function renderGraph(graph, nodeDetails) {
       zIndex: 6,
       attrs: {
         body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-        label: { text: iconText, fontSize: 20, fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5, pointerEvents: 'none' },
+        label: { text: iconText, fontSize: 22, fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5, pointerEvents: 'none' },
       },
       ports: { groups: {}, items: [] },
     }) : null;
@@ -683,7 +683,7 @@ function renderGraph(graph, nodeDetails) {
       zIndex: 5,
       attrs: {
         body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-        label: { text: descLines.join('\n'), fontSize: 12, fill: '#666', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
+        label: { text: descLines.join('\n'), fontSize: 14, fill: '#666', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
       },
       ports: { groups: {}, items: [] },
     });
@@ -705,8 +705,8 @@ function renderGraph(graph, nodeDetails) {
       const titleText = n.label;
       const innerW = Math.max(10, pos.w - 24);
       const rawDesc = (n.desc || '').replace(/\s+/g, ' ').trim();
-      const titleLines = wrapTextToLines(titleText, innerW, 15, 'bold');
-      const descLines = wrapTextToLines(rawDesc, innerW, 13, 'normal');
+      const titleLines = wrapTextToLines(titleText, innerW, 17, 'bold');
+      const descLines = wrapTextToLines(rawDesc, innerW, 15, 'normal');
       const gap = 12;
       const titleH = Math.max(20, titleLines.length * 18);
       const descH = descLines.length > 0 ? Math.max(14, descLines.length * 16) : 0;
@@ -721,7 +721,7 @@ function renderGraph(graph, nodeDetails) {
         zIndex: 1,
         attrs: {
           body: { fill: theme.fill, stroke: theme.stroke, strokeWidth: 2.2, strokeDasharray: '6 3', rx: 10, ry: 10 },
-          label: { text: '', fontSize: 15, fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5 },
+          label: { text: '', fontSize: 17, fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5 },
         },
         ports: portsDef(n.id, n.lane),
       });
@@ -737,7 +737,7 @@ function renderGraph(graph, nodeDetails) {
         zIndex: 5,
         attrs: {
           body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-          label: { text: titleLines.join('\n'), fontSize: 15, fontWeight: 'bold', fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
+          label: { text: titleLines.join('\n'), fontSize: 17, fontWeight: 'bold', fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
         },
         ports: { groups: {}, items: [] },
       });
@@ -751,7 +751,7 @@ function renderGraph(graph, nodeDetails) {
         zIndex: 6,
         attrs: {
           body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-          label: { text: iconText, fontSize: 21, fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5, pointerEvents: 'none' },
+          label: { text: iconText, fontSize: 23, fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5, pointerEvents: 'none' },
         },
         ports: { groups: {}, items: [] },
       }) : null;
@@ -765,7 +765,7 @@ function renderGraph(graph, nodeDetails) {
         zIndex: 5,
         attrs: {
           body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-          label: { text: descLines.join('\n'), fontSize: 13, fill: '#666', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
+          label: { text: descLines.join('\n'), fontSize: 15, fill: '#666', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
         },
         ports: { groups: {}, items: [] },
       });
@@ -775,8 +775,8 @@ function renderGraph(graph, nodeDetails) {
     } else {
       const innerW = Math.max(10, pos.w - 24);
       const rawDesc = (n.desc || '').replace(/\s+/g, ' ').trim();
-      const titleLines = wrapTextToLines(n.label, innerW, 14, 'bold');
-      const descLines = wrapTextToLines(rawDesc, innerW, 12, 'normal');
+      const titleLines = wrapTextToLines(n.label, innerW, 16, 'bold');
+      const descLines = wrapTextToLines(rawDesc, innerW, 14, 'normal');
       const lines = descLines.length > 0 ? [...titleLines, ...descLines] : [...titleLines];
       const labelText = lines.join('\n');
       const dynH = Math.max(pos.h, 18 + lines.length * 14);
@@ -790,7 +790,7 @@ function renderGraph(graph, nodeDetails) {
         zIndex: 1,
         attrs: {
           body: { fill: theme.light, stroke: theme.stroke, strokeWidth: 1.6 + (n.importance || 0) * 0.9, rx: 6, ry: 6 },
-          label: { text: labelText, fontSize: 13, fill: '#333', textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5 },
+          label: { text: labelText, fontSize: 15, fill: '#333', textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5 },
         },
         ports: portsDef(n.id, n.lane),
       });
@@ -1326,8 +1326,8 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
     const width = 240;
     const baseBodyH = 80;
     const innerW = Math.max(10, width - 24);
-    const titleLines = wrapTextToLines(name.trim(), innerW, 15, 'bold');
-    const descLines = wrapTextToLines((brief || '').trim(), innerW, 13, 'normal');
+    const titleLines = wrapTextToLines(name.trim(), innerW, 17, 'bold');
+    const descLines = wrapTextToLines((brief || '').trim(), innerW, 15, 'normal');
     const gap = 12;
     const titleH = Math.max(20, titleLines.length * 18);
     const descH = descLines.length > 0 ? Math.max(14, descLines.length * 16) : 0;
@@ -1341,7 +1341,7 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
       zIndex: 1,
       attrs: {
         body: { fill: 'rgba(33,124,243,0.05)', stroke: '#217cf3', strokeWidth: 2, strokeDasharray: '6 3', rx: 8, ry: 8 },
-        label: { text: '', fontSize: 15, fill: '#217cf3', textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5 },
+        label: { text: '', fontSize: 17, fill: '#217cf3', textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5 },
       },
       ports: {
         groups: {
@@ -1367,7 +1367,7 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
       zIndex: 5,
       attrs: {
         body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-        label: { text: titleLines.join('\n'), fontSize: 15, fontWeight: 'bold', fill: '#217cf3', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
+        label: { text: titleLines.join('\n'), fontSize: 17, fontWeight: 'bold', fill: '#217cf3', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
       },
       ports: { groups: {}, items: [] },
     });
@@ -1381,7 +1381,7 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
       zIndex: 5,
       attrs: {
         body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-        label: { text: descLines.join('\n'), fontSize: 13, fill: '#666', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
+        label: { text: descLines.join('\n'), fontSize: 15, fill: '#666', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
       },
       ports: { groups: {}, items: [] },
     });
@@ -1486,7 +1486,7 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
       width: NODE_W, height: NODE_H,
       attrs: {
         body: { fill: '#ffffff', stroke: '#666', strokeWidth: 1.5, rx: 4, ry: 4 },
-        label: { text: name.trim(), fontSize: 14, fill: '#333', textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5 },
+        label: { text: name.trim(), fontSize: 16, fill: '#333', textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5 },
       },
       ports: {
         groups: {

@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
@@ -7,41 +8,64 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 import uvicorn
-from pipeline_runner import run_pipeline, run_edit_pipeline # Updated Import
-import sys
 import hashlib
 import httpx
 from datetime import datetime
-# Add parent directory to path for config import
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)  # 添加 server 目录
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)  # 添加项目根目录
+
 from config import *
+
+from pipeline_runner import run_pipeline, run_edit_pipeline # Updated Import
 from session_manager import SESSIONS_DIR, create_modified_plan, get_session_tree
 from exporter import export_to_docx
-from retriever_neo4j import get_global_stores
+# from retriever_neo4j import get_global_stores
+from retriever_neo4j import get_graph_store, get_vector_store
 from retriever_rag import get_rag_store, rag_retrieve
 
 import threading
 
+KG_READY = False
+RAG_READY = False
+KG_LOADING = False
+RAG_LOADING = False
+KG_INIT_ERROR = None
+RAG_INIT_ERROR = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Server starting — pre-loading knowledge stores...")
-    try:
-        get_global_stores()
-        print("Knowledge graph stores ready.")
-    except Exception as e:
-        print(f"Failed to pre-load knowledge graph stores: {e}")
-
-    # RAG index build can take 30-60 min on first run — run in background thread
-    def _init_rag():
-        try:
-            get_rag_store()
-            print("RAG vector store ready.")
-        except Exception as e:
-            print(f"Failed to initialize RAG store: {e}")
-
-    threading.Thread(target=_init_rag, daemon=True, name="rag-init").start()
-    print("RAG index initializing in background — server ready.")
+    print("Server starting...", flush=True)
+    print("Startup complete.", flush=True)
     yield
+
+# @asynccontextmanager
+# async def lifespan(app: FastAPI):
+#     print("Server starting — pre-loading knowledge stores...")
+#     try:
+#         # get_global_stores()
+#         get_graph_store()
+#         print("Knowledge graph stores ready.")
+#     except Exception as e:
+#         print(f"Failed to pre-load knowledge graph stores: {e}")
+
+#     # RAG index build can take 30-60 min on first run — run in background thread
+#     def _init_rag():
+#         try:
+#             get_rag_store()
+#             print("RAG vector store ready.")
+#         except Exception as e:
+#             print(f"Failed to initialize RAG store: {e}")
+
+#     threading.Thread(target=_init_rag, daemon=True, name="rag-init").start()
+#     print("RAG index initializing in background — server ready.")
+#     yield
+
 
 app = FastAPI(lifespan=lifespan)
 
@@ -108,6 +132,91 @@ class SaveRequest(BaseModel):
     plan_id: Optional[str] = None
     current_plan: dict
     original_query: Optional[str] = None
+
+@app.get("/ready")
+async def ready():
+    return {
+        "kg_ready": KG_READY,
+        "rag_ready": RAG_READY,
+        "kg_loading": KG_LOADING,
+        "rag_loading": RAG_LOADING,
+        "kg_error": KG_INIT_ERROR,
+        "rag_error": RAG_INIT_ERROR,
+        "all_ready": KG_READY and RAG_READY,
+    }
+
+@app.get("/ready/kg")
+async def ready_kg():
+    return {
+        "ready": KG_READY,
+        "loading": KG_LOADING,
+        "error": KG_INIT_ERROR,
+    }
+
+
+@app.get("/ready/rag")
+async def ready_rag():
+    return {
+        "ready": RAG_READY,
+        "loading": RAG_LOADING,
+        "error": RAG_INIT_ERROR,
+    }
+
+@app.post("/warmup/kg")
+async def warmup_kg():
+    global KG_READY, KG_LOADING, KG_INIT_ERROR
+
+    if KG_READY:
+        return {"status": "ok", "message": "KG already ready."}
+    if KG_LOADING:
+        return {"status": "ok", "message": "KG warmup already running."}
+
+    def _run():
+        global KG_READY, KG_LOADING, KG_INIT_ERROR
+        KG_LOADING = True
+        KG_INIT_ERROR = None
+        try:
+            print("[KG] Warmup started...", flush=True)
+            get_graph_store()
+            get_vector_store()
+            KG_READY = True
+            print("[KG] Warmup finished.", flush=True)
+        except Exception as e:
+            KG_INIT_ERROR = str(e)
+            print(f"[KG] Warmup failed: {e}", flush=True)
+        finally:
+            KG_LOADING = False
+
+    threading.Thread(target=_run, daemon=True, name="kg-warmup").start()
+    return {"status": "ok", "message": "KG warmup started."}
+
+
+@app.post("/warmup/rag")
+async def warmup_rag():
+    global RAG_READY, RAG_LOADING, RAG_INIT_ERROR
+
+    if RAG_READY:
+        return {"status": "ok", "message": "RAG already ready."}
+    if RAG_LOADING:
+        return {"status": "ok", "message": "RAG warmup already running."}
+
+    def _run():
+        global RAG_READY, RAG_LOADING, RAG_INIT_ERROR
+        RAG_LOADING = True
+        RAG_INIT_ERROR = None
+        try:
+            print("[RAG] Warmup started...", flush=True)
+            get_rag_store()
+            RAG_READY = True
+            print("[RAG] Warmup finished.", flush=True)
+        except Exception as e:
+            RAG_INIT_ERROR = str(e)
+            print(f"[RAG] Warmup failed: {e}", flush=True)
+        finally:
+            RAG_LOADING = False
+
+    threading.Thread(target=_run, daemon=True, name="rag-warmup").start()
+    return {"status": "ok", "message": "RAG warmup started."}
 
 # --- 4. 核心接口 ---
 @app.get("/ping")
@@ -333,7 +442,7 @@ async def chat_text(req: ChatRequest):
 
             # ── Step 1: first call with tools available ──────────────────────
             first_resp = client.chat.completions.create(
-                model="gpt-5.2-chat-latest",
+                model=CHAT_MODEL,
                 messages=msgs,
                 tools=[_RAG_TOOL],
                 tool_choice="auto",
@@ -352,13 +461,20 @@ async def chat_text(req: ChatRequest):
 
                 yield json.dumps({"type": "tool_call", "query": query}) + "\n"
 
-                from retriever_rag import _RAG_VECTOR_STORE
-                if query and _RAG_VECTOR_STORE is not None:
-                    chunks = rag_retrieve(query)
+                # from retriever_rag import _RAG_VECTOR_STORE
+                # if query and _RAG_VECTOR_STORE is not None:
+                #     chunks = rag_retrieve(query)
+                # else:
+                #     chunks = []
+                # tool_result = _format_rag_results(chunks)
+                if query:
+                    if not RAG_READY:
+                        tool_result = "RAG knowledge base is not ready yet. Please warm it up first."
+                    else:
+                        chunks = rag_retrieve(query)
+                        tool_result = _format_rag_results(chunks)
                 else:
-                    chunks = []
-                tool_result = _format_rag_results(chunks)
-
+                    tool_result = "Empty query."
                 # Append assistant tool-call message + tool result to history
                 # Must convert SDK object to plain dict for the next API call
                 assistant_msg = {
@@ -387,7 +503,7 @@ async def chat_text(req: ChatRequest):
 
                 # ── Step 3: stream final answer with retrieved context ───────
                 final_resp = client.chat.completions.create(
-                    model="gpt-5.2-chat-latest",
+                    model=CHAT_MODEL,
                     messages=msgs_with_tool,
                     stream=True,
                 )
@@ -447,7 +563,7 @@ async def chat_image(req: ImageRequest):
             {"role": "user", "content": req.prompt},
         ]
         gpt_resp = client.chat.completions.create(
-            model="gpt-5.2-chat-latest",
+            model=CHAT_MODEL,
             messages=messages_for_gpt,
             temperature=0.4,
         )

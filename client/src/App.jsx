@@ -80,6 +80,11 @@ function App() {
     plansRef.current = plans;
   }, [plans]);
 
+  // Trigger KG warmup when the generate page loads
+  useEffect(() => {
+    fetch(`${API_BASE}/warmup/kg`, { method: 'POST' }).catch(() => {});
+  }, []);
+
   useEffect(() => {
     const currentPlan = plansRef.current[activePlanIndex];
     if (currentPlan) {
@@ -516,15 +521,18 @@ function App() {
 
       let newPlans = [];
       let isFirstPlanLoaded = false;
+      let buf = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunkStr = decoder.decode(value, { stream: true });
-        const lines = chunkStr.split('\n').filter(line => line.trim() !== '');
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
 
         for (const line of lines) {
+          if (!line.trim()) continue;
           try {
             const data = JSON.parse(line);
 
@@ -618,15 +626,18 @@ function App() {
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder('utf-8');
+      let editBuf = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunkStr = decoder.decode(value, { stream: true });
-        const lines = chunkStr.split('\n').filter(line => line.trim() !== '');
+        editBuf += decoder.decode(value, { stream: true });
+        const lines = editBuf.split('\n');
+        editBuf = lines.pop();
 
         for (const line of lines) {
+          if (!line.trim()) continue;
           try {
             const data = JSON.parse(line);
             if (data.type === 'progress') {

@@ -1,8 +1,13 @@
 import os
 
 # === OpenAI Configuration ===
-os.environ["OPENAI_API_KEY"] = "sk-y44HwiOqlzdvdMwiVGmyzpITjGQdkwWS0bJuDMWN2awpHnX7" 
+os.environ["OPENAI_API_KEY"] = "sk-y44HwiOqlzdvdMwiVGmyzpITjGQdkwWS0bJuDMWN2awpHnX7"
 os.environ["OPENAI_BASE_URL"] = "https://poloai.top/v1"
+
+# === Model Configuration ===
+# Change this one line to switch models across the entire backend
+CHAT_MODEL = "gpt-4.1"
+# CHAT_MODEL = "gpt-5"
 
 os.environ["DASHSCOPE_API_KEY"] = "sk-8d86e8ae17e04f6aacff4a43cfae481a"
 
@@ -19,7 +24,7 @@ if __name__ == "__main__":
     client = OpenAI(http_client=http_client)
     
     print(client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=CHAT_MODEL,
         messages=[{"role": "user", "content": "How are you?"}],
         temperature=0.2,
     ).choices[0].message.content)
