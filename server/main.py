@@ -27,6 +27,10 @@ from exporter import export_to_docx
 # from retriever_neo4j import get_global_stores
 from retriever_neo4j import get_graph_store, get_vector_store
 from retriever_rag import get_rag_store, rag_retrieve
+from chat_session_manager import (
+    create_chat_session, save_chat_turn, get_chat_session,
+    list_chat_sessions, delete_chat_session, rename_chat_session
+)
 
 import threading
 
@@ -381,6 +385,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[ChatMessage]   # full history
     session_id: Optional[str] = None
+    save_history: bool = True  # whether to save to server
 
 class ImageRequest(BaseModel):
     prompt: str
@@ -435,7 +440,20 @@ async def chat_text(req: ChatRequest):
     """
     msgs = [{"role": m.role, "content": m.content} for m in req.messages]
 
+    # Extract user message for saving
+    user_msg_content = ""
+    if msgs and msgs[-1]["role"] == "user":
+        content = msgs[-1]["content"]
+        if isinstance(content, str):
+            user_msg_content = content
+        elif isinstance(content, list):
+            # Extract text from multimodal content
+            user_msg_content = " ".join(
+                item.get("text", "") for item in content if isinstance(item, dict) and item.get("type") == "text"
+            )
+
     def stream():
+        assistant_content = ""
         try:
             # Signal that we're thinking (before first LLM call)
             yield json.dumps({"type": "thinking"}) + "\n"
@@ -461,12 +479,6 @@ async def chat_text(req: ChatRequest):
 
                 yield json.dumps({"type": "tool_call", "query": query}) + "\n"
 
-                # from retriever_rag import _RAG_VECTOR_STORE
-                # if query and _RAG_VECTOR_STORE is not None:
-                #     chunks = rag_retrieve(query)
-                # else:
-                #     chunks = []
-                # tool_result = _format_rag_results(chunks)
                 if query:
                     if not RAG_READY:
                         tool_result = "RAG knowledge base is not ready yet. Please warm it up first."
@@ -512,15 +524,35 @@ async def chat_text(req: ChatRequest):
                         continue
                     delta = chunk.choices[0].delta
                     if delta.content:
+                        assistant_content += delta.content
                         yield json.dumps({"type": "delta", "content": delta.content}) + "\n"
 
             else:
                 # ── No tool call — stream the direct response ────────────────
                 content = choice.message.content or ""
+                assistant_content = content
                 if content:
                     yield json.dumps({"type": "delta", "content": content}) + "\n"
 
             yield json.dumps({"type": "done"}) + "\n"
+
+            # Save to server if requested
+            if req.save_history and req.session_id:
+                try:
+                    save_chat_turn(req.session_id, {
+                        "role": "user",
+                        "type": "text",
+                        "content": user_msg_content,
+                        "timestamp": datetime.now().isoformat()
+                    })
+                    save_chat_turn(req.session_id, {
+                        "role": "assistant",
+                        "type": "text",
+                        "content": assistant_content,
+                        "timestamp": datetime.now().isoformat()
+                    })
+                except Exception as e:
+                    print(f"Failed to save chat history: {e}")
 
         except Exception as e:
             yield json.dumps({"type": "error", "message": str(e)}) + "\n"
@@ -588,7 +620,82 @@ async def chat_image(req: ImageRequest):
         image_url = next(item['image'] for item in content if isinstance(item, dict) and 'image' in item)
         img_bytes = _httpx.get(image_url, timeout=30).content
         b64 = _base64.b64encode(img_bytes).decode('utf-8')
+
+        # Save image turn to session if requested
+        if req.session_id:
+            try:
+                save_chat_turn(req.session_id, {
+                    "role": "user",
+                    "type": "text",
+                    "content": req.prompt,
+                    "timestamp": datetime.now().isoformat()
+                })
+                save_chat_turn(req.session_id, {
+                    "role": "assistant",
+                    "type": "image",
+                    "content": b64,
+                    "timestamp": datetime.now().isoformat()
+                })
+            except Exception as e:
+                print(f"Failed to save image chat history: {e}")
+
         return JSONResponse({"type": "image", "b64": b64})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────
+# Chat session management endpoints
+# ─────────────────────────────────────────────
+
+@app.get("/chat/sessions")
+async def get_chat_sessions():
+    """List all chat sessions."""
+    try:
+        sessions = list_chat_sessions()
+        return JSONResponse({"sessions": sessions})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/chat/sessions/{session_id}")
+async def get_chat_session_by_id(session_id: str):
+    """Get a specific chat session by ID."""
+    try:
+        session = get_chat_session(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return JSONResponse(session)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class RenameChatSessionRequest(BaseModel):
+    title: str
+
+@app.put("/chat/sessions/{session_id}/rename")
+async def rename_chat_session_endpoint(session_id: str, req: RenameChatSessionRequest):
+    """Rename a chat session."""
+    try:
+        success = rename_chat_session(session_id, req.title)
+        if not success:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return JSONResponse({"status": "ok"})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/chat/sessions/{session_id}")
+async def delete_chat_session_endpoint(session_id: str):
+    """Delete a chat session."""
+    try:
+        success = delete_chat_session(session_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return JSONResponse({"status": "ok"})
     except HTTPException:
         raise
     except Exception as e:

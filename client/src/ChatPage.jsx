@@ -15,7 +15,7 @@ const API_BASE = import.meta.env.DEV ? 'http://localhost:8000' : '/api';
 //   return IMAGE_KEYWORDS.some((re) => re.test(text));
 // }
 
-// ── Session storage (localStorage) ─────────────────────────────────────────
+// ── Session storage (server-side) ─────────────────────────────────────────
 function createSession() {
   return {
     id: `chat_${Date.now()}`,
@@ -25,54 +25,49 @@ function createSession() {
   };
 }
 
-function saveSession(session) {
+async function deleteSession(sessionId) {
   try {
-    const key = `chatlog_${session.id}`;
-    localStorage.setItem(key, JSON.stringify(session));
-    const index = JSON.parse(localStorage.getItem('chatlog_index') || '[]');
-    if (!index.includes(session.id)) {
-      index.push(session.id);
-      localStorage.setItem('chatlog_index', JSON.stringify(index));
-    }
-  } catch (_) {}
+    await fetch(`${API_BASE}/chat/sessions/${sessionId}`, { method: 'DELETE' });
+  } catch (e) {
+    console.error('Failed to delete session:', e);
+  }
 }
 
-function deleteSession(sessionId) {
+async function renameSession(sessionId, newTitle) {
   try {
-    localStorage.removeItem(`chatlog_${sessionId}`);
-    const index = JSON.parse(localStorage.getItem('chatlog_index') || '[]');
-    localStorage.setItem('chatlog_index', JSON.stringify(index.filter((id) => id !== sessionId)));
-  } catch (_) {}
+    await fetch(`${API_BASE}/chat/sessions/${sessionId}/rename`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: newTitle })
+    });
+  } catch (e) {
+    console.error('Failed to rename session:', e);
+  }
 }
 
-function renameSession(sessionId, newTitle) {
+async function loadSession(sessionId) {
   try {
-    const key = `chatlog_${sessionId}`;
-    const session = JSON.parse(localStorage.getItem(key) || 'null');
-    if (!session) return;
-    session.title = newTitle;
-    localStorage.setItem(key, JSON.stringify(session));
-  } catch (_) {}
-}
-
-function loadSession(sessionId) {
-  try {
-    const key = `chatlog_${sessionId}`;
-    return JSON.parse(localStorage.getItem(key) || 'null');
+    const res = await fetch(`${API_BASE}/chat/sessions/${sessionId}`);
+    if (!res.ok) return null;
+    return await res.json();
   } catch (_) {
     return null;
   }
 }
 
-function getAllSessions() {
-  const index = JSON.parse(localStorage.getItem('chatlog_index') || '[]');
-  return index.map(loadSession).filter(Boolean).sort((a, b) =>
-    new Date(b.startedAt) - new Date(a.startedAt)
-  );
+async function getAllSessions() {
+  try {
+    const res = await fetch(`${API_BASE}/chat/sessions`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.sessions || [];
+  } catch (_) {
+    return [];
+  }
 }
 
 async function exportLogs() {
-  const sessions = getAllSessions();
+  const sessions = await getAllSessions();
   const zip = new JSZip();
 
   for (const session of sessions) {
@@ -145,7 +140,7 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false);
   const [ragQuery, setRagQuery] = useState(null); // non-null while RAG retrieval is in progress
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sessionList, setSessionList] = useState(() => getAllSessions());
+  const [sessionList, setSessionList] = useState([]);
   const [attachedImage, setAttachedImage] = useState(null); // base64 data URL for pasted image
   // rename state: { id, value } | null
   const [renaming, setRenaming] = useState(null);
@@ -154,6 +149,11 @@ export default function ChatPage() {
   const sessionRef = useRef(createSession());
   const listRef = useRef(null);
   const inputRef = useRef(null);
+
+  // Load sessions on mount
+  useEffect(() => {
+    getAllSessions().then(setSessionList);
+  }, []);
 
   // auto-scroll to bottom
   useEffect(() => {
@@ -177,19 +177,12 @@ export default function ChatPage() {
     });
   }, []);
 
-  function persistSession(extraTurns) {
-    const session = sessionRef.current;
-    session.turns.push(...extraTurns);
-    if (!session.title) {
-      const firstUser = session.turns.find((t) => t.role === 'user');
-      session.title = firstUser ? firstUser.content.slice(0, 40) : 'Untitled';
-    }
-    saveSession(session);
-    setSessionList(getAllSessions());
+  async function refreshSessionList() {
+    const sessions = await getAllSessions();
+    setSessionList(sessions);
   }
 
-  async function sendText(userText, historyForApi) {
-    const t0 = Date.now();
+  async function sendText(historyForApi) {
     const placeholder = { role: 'assistant', type: 'text', content: '', timestamp: new Date().toISOString() };
     appendMessage(placeholder);
 
@@ -198,7 +191,11 @@ export default function ChatPage() {
       const res = await fetch(`${API_BASE}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: historyForApi }),
+        body: JSON.stringify({
+          messages: historyForApi,
+          session_id: sessionRef.current.id,
+          save_history: true
+        }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const reader = res.body.getReader();
@@ -239,12 +236,8 @@ export default function ChatPage() {
     }
 
     setRagQuery(null);
-    const durationMs = Date.now() - t0;
-    const assistantMsg = { role: 'assistant', type: 'text', content: fullContent, timestamp: new Date().toISOString(), durationMs };
-    persistSession([
-      { role: 'user', type: 'text', content: userText, timestamp: new Date().toISOString() },
-      assistantMsg,
-    ]);
+    // Refresh session list after chat completes
+    await refreshSessionList();
   }
 
   // ── Image generation (DISABLED) ──────────────────────────────────────────
@@ -316,7 +309,7 @@ export default function ChatPage() {
       return [];
     });
 
-    await sendText(text || '请描述这张图片', history);
+    await sendText(history);
 
     setLoading(false);
     inputRef.current?.focus();
@@ -335,16 +328,20 @@ export default function ChatPage() {
     inputRef.current?.focus();
   }
 
-  function handleLoadSession(session) {
+  async function handleLoadSession(session) {
+    // Load full session from server
+    const fullSession = await loadSession(session.id);
+    if (!fullSession) return;
+
     // Reconstruct messages from stored turns (pair user+assistant)
-    setMessages(session.turns.map((t) => ({
+    setMessages(fullSession.turns.map((t) => ({
       role: t.role,
       type: t.type,
       content: t.content,
       timestamp: t.timestamp,
     })));
     // Point sessionRef to the loaded session so new messages append to it
-    sessionRef.current = { ...session };
+    sessionRef.current = { ...fullSession };
     inputRef.current?.focus();
   }
 
@@ -362,12 +359,12 @@ export default function ChatPage() {
     setCtxMenu({ id: sessionId, x: e.clientX, y: e.clientY });
   }
 
-  function handleCtxDelete() {
+  async function handleCtxDelete() {
     if (!ctxMenu) return;
     const id = ctxMenu.id;
     setCtxMenu(null);
-    deleteSession(id);
-    setSessionList(getAllSessions());
+    await deleteSession(id);
+    await refreshSessionList();
     // if we deleted the active session, start fresh
     if (sessionRef.current.id === id) {
       setMessages([]);
@@ -382,13 +379,13 @@ export default function ChatPage() {
     setCtxMenu(null);
   }
 
-  function commitRename(id) {
+  async function commitRename(id) {
     const value = renaming?.value?.trim();
     if (value) {
-      renameSession(id, value);
+      await renameSession(id, value);
       // also update in-memory sessionRef if it's the active session
       if (sessionRef.current.id === id) sessionRef.current.title = value;
-      setSessionList(getAllSessions());
+      await refreshSessionList();
     }
     setRenaming(null);
   }
