@@ -1,9 +1,9 @@
-import { useEffect, useRef, useImperativeHandle, forwardRef, useCallback } from 'react';
+import { useEffect, useRef, useImperativeHandle, forwardRef, useCallback, useState } from 'react';
 import { Graph, Shape, Selection, Export } from '@antv/x6';
 
-const NODE_W = 240;
+const NODE_W = 280;
 const NODE_H = 88;
-const GROUP_W = 300;
+const GROUP_W = 360;
 
 const ROLE_THEME = {
   input: { fill: 'rgba(56,132,255,0.1)', stroke: '#3b82f6', text: '#2456b3', light: '#e8f1ff' },
@@ -128,7 +128,7 @@ function wrapTextToLines(text, maxWidth, fontSize = 12, fontWeight = 'normal') {
   return lines;
 }
 
-function computeProcessingLevels(topNodes, edges, childToParent) {
+function computeTopologicalLevels(topNodes, edges, childToParent) {
   const topSet = new Set(topNodes.map(n => n.id));
   const incoming = {};
   const indegree = {};
@@ -162,16 +162,12 @@ function computeProcessingLevels(topNodes, edges, childToParent) {
     if (!order.includes(n.id)) order.push(n.id);
   });
 
+  // Compute level for ALL nodes based on topological order
   const levelMap = {};
   order.forEach(id => {
-    const cur = topNodes.find(n => n.id === id);
-    if (!cur || cur.lane !== 'processing') {
-      levelMap[id] = 0;
-      return;
-    }
     const upstreamLevels = incoming[id]
       .map(up => levelMap[up] ?? 0);
-    levelMap[id] = upstreamLevels.length > 0 ? Math.max(...upstreamLevels) + 1 : 1;
+    levelMap[id] = upstreamLevels.length > 0 ? Math.max(...upstreamLevels) + 1 : 0;
   });
 
   return levelMap;
@@ -181,31 +177,17 @@ function runRoleLayout(nodes, edges) {
   const positions = {};
   const topNodes = nodes.filter(n => !n.parent);
   const childToParent = {};
-  const childCountMap = {};
   nodes.forEach(n => {
-    if (n.parent) {
-      childToParent[n.id] = n.parent;
-      childCountMap[n.parent] = (childCountMap[n.parent] || 0) + 1;
-    }
+    if (n.parent) childToParent[n.id] = n.parent;
   });
 
-  const levelMap = computeProcessingLevels(topNodes, edges, childToParent);
-  // data lane sits at the top as a horizontal row; other lanes stack vertically in columns below
-  const laneOrder = { data: 0, input: 1, processing: 2, output: 3, unknown: 4 };
-  const colLaneX = { input: 80, processing: 560, output: 1120, unknown: 840 };
-  const rowGap = 100;
+  // Compute topological levels for all top-level nodes (drives X position)
+  const levelMap = computeTopologicalLevels(topNodes, edges, childToParent);
+
+  const COL_GAP = 120;   // horizontal gap between columns (increased for better flow visibility)
+  const ROW_GAP = 60;   // vertical gap between nodes in same column (increased to reduce stacking feel)
+  const DATA_ROW_GAP = 60; // gap below data row
   const childGap = 16;
-  const DATA_TOP = 40;
-  const DATA_NODE_GAP = 40;
-
-  const ordered = [...topNodes].sort((a, b) => {
-    const laneDiff = (laneOrder[a.lane] ?? 4) - (laneOrder[b.lane] ?? 4);
-    if (laneDiff !== 0) return laneDiff;
-    const levelDiff = (levelMap[a.id] || 0) - (levelMap[b.id] || 0);
-    if (levelDiff !== 0) return levelDiff;
-    if ((b.importance || 0) !== (a.importance || 0)) return (b.importance || 0) - (a.importance || 0);
-    return String(a.label || a.id).localeCompare(String(b.label || b.id));
-  });
 
   // Pre-calculate sub-node dynamic heights
   const subnodeDims = {};
@@ -219,7 +201,6 @@ function runRoleLayout(nodes, edges) {
     subnodeDims[n.id] = { w: NODE_W, h: dynH };
   });
 
-  // Helper: compute node height without placing it
   function computeNodeDims(n) {
     const w = n.isGroup ? GROUP_W : NODE_W;
     const innerW = Math.max(10, w - 24);
@@ -252,46 +233,86 @@ function runRoleLayout(nodes, edges) {
     return { w, h, overlayTop };
   }
 
-  // First pass: compute heights for all top nodes
   const nodeDims = {};
-  ordered.forEach(n => { nodeDims[n.id] = computeNodeDims(n); });
+  topNodes.forEach(n => { nodeDims[n.id] = computeNodeDims(n); });
 
-  // Compute data row height (tallest data node) so columns start below it
-  const dataNodes = ordered.filter(n => n.lane === 'data');
-  const dataRowH = dataNodes.length > 0
-    ? Math.max(...dataNodes.map(n => nodeDims[n.id].h))
-    : 0;
-  const COL_TOP = dataNodes.length > 0 ? DATA_TOP + dataRowH + rowGap : DATA_TOP;
+  // Separate data nodes (shown as a horizontal row at top) from flow nodes
+  const dataNodes = topNodes.filter(n => n.lane === 'data');
+  const flowNodes = topNodes.filter(n => n.lane !== 'data');
 
-  // Place data nodes horizontally across the top, centered over the column area
-  const colLanes = ['input', 'processing', 'output', 'unknown'];
-  const colXValues = colLanes.map(l => colLaneX[l]);
-  const layoutLeft = Math.min(...colXValues);
-  const layoutRight = Math.max(...colXValues) + NODE_W;
-  const layoutWidth = layoutRight - layoutLeft;
+  // Group flow nodes by their topological level (column index)
+  const levelGroups = {};
+  flowNodes.forEach(n => {
+    const lvl = levelMap[n.id] ?? 0;
+    if (!levelGroups[lvl]) levelGroups[lvl] = [];
+    levelGroups[lvl].push(n);
+  });
 
+  // Sort nodes within each column: input first, then processing, then output/unknown
+  const laneOrder = { input: 0, processing: 1, output: 2, unknown: 3 };
+  Object.values(levelGroups).forEach(group => {
+    group.sort((a, b) => {
+      const lo = (laneOrder[a.lane] ?? 3) - (laneOrder[b.lane] ?? 3);
+      if (lo !== 0) return lo;
+      return (b.importance || 0) - (a.importance || 0);
+    });
+  });
+
+  // Compute column widths (widest node in each column)
+  const levels = Object.keys(levelGroups).map(Number).sort((a, b) => a - b);
+  const colWidths = {};
+  levels.forEach(lvl => {
+    colWidths[lvl] = Math.max(...levelGroups[lvl].map(n => nodeDims[n.id].w));
+  });
+
+  // Compute X positions for each column (left-to-right)
+  const colX = {};
+  let curX = 60;
+  levels.forEach(lvl => {
+    colX[lvl] = curX;
+    curX += colWidths[lvl] + COL_GAP;
+  });
+
+  // Compute column heights to vertically center nodes
+  const colHeights = {};
+  levels.forEach(lvl => {
+    const group = levelGroups[lvl];
+    const totalH = group.reduce((sum, n) => sum + nodeDims[n.id].h, 0)
+      + ROW_GAP * (group.length - 1);
+    colHeights[lvl] = totalH;
+  });
+  const maxColH = Math.max(...Object.values(colHeights), 0);
+
+  // Place flow nodes: each column centered vertically
+  const FLOW_TOP = 40;
+  levels.forEach(lvl => {
+    const group = levelGroups[lvl];
+    const colH = colHeights[lvl];
+    let y = FLOW_TOP + (maxColH - colH) / 2;
+    group.forEach(n => {
+      const { w, h, overlayTop } = nodeDims[n.id];
+      // Center node horizontally within its column
+      const x = colX[lvl] + (colWidths[lvl] - w) / 2;
+      positions[n.id] = { x, y, w, h, overlayTop };
+      y += h + ROW_GAP;
+    });
+  });
+
+  // Place data nodes as a horizontal row below the flow nodes
   if (dataNodes.length > 0) {
+    const dataRowTop = FLOW_TOP + maxColH + DATA_ROW_GAP;
+    const totalFlowWidth = curX - COL_GAP - 60; // total width of flow area
     const totalDataW = dataNodes.reduce((sum, n) => sum + nodeDims[n.id].w, 0)
-      + DATA_NODE_GAP * (dataNodes.length - 1);
-    let dataX = layoutLeft + (layoutWidth - totalDataW) / 2;
+      + 40 * (dataNodes.length - 1);
+    let dataX = 60 + (totalFlowWidth - totalDataW) / 2;
     dataNodes.forEach(n => {
       const { w, h, overlayTop } = nodeDims[n.id];
-      positions[n.id] = { x: dataX, y: DATA_TOP, w, h, overlayTop };
-      dataX += w + DATA_NODE_GAP;
+      positions[n.id] = { x: dataX, y: dataRowTop, w, h, overlayTop };
+      dataX += w + 40;
     });
   }
 
-  // Place column-lane nodes (input / processing / output / unknown) stacking vertically
-  const laneY = { input: COL_TOP, processing: COL_TOP, output: COL_TOP, unknown: COL_TOP };
-
-  ordered.filter(n => n.lane !== 'data').forEach(n => {
-    const lane = n.lane || 'unknown';
-    const x = colLaneX[lane] ?? colLaneX.unknown;
-    const { w, h, overlayTop } = nodeDims[n.id];
-    positions[n.id] = { x, y: laneY[lane], w, h, overlayTop };
-    laneY[lane] += h + rowGap;
-  });
-
+  // Place child nodes inside their parents
   nodes.filter(n => n.parent).forEach((n) => {
     const parentPos = positions[n.parent] || { x: 0, y: 0, w: GROUP_W, h: 160, overlayTop: 60 };
     const siblings = nodes.filter(s => s.parent === n.parent).sort((a, b) => String(a.id).localeCompare(String(b.id)));
@@ -301,9 +322,7 @@ function runRoleLayout(nodes, edges) {
     let currentY = parentPos.y + overlayTop + padding;
     for (let i = 0; i < siblings.length; i++) {
       const s = siblings[i];
-      if (s.id === n.id) {
-        break;
-      }
+      if (s.id === n.id) break;
       currentY += (subnodeDims[s.id]?.h || NODE_H) + childGap;
     }
     positions[n.id] = {
@@ -314,11 +333,12 @@ function runRoleLayout(nodes, edges) {
     };
   });
 
-  return { positions, levelMap };
+  return { positions, levelMap, childToParent };
 }
 
 // ─── JSON → graph nodes/edges ─────────────────────────────────────────────────
-function parseNodeDetails(nodeDetails) {
+function parseNodeDetails(nodeDetails, options = {}) {
+  const { collapsed = false } = options;
   const nodes = [];
   const edges = [];
   const isOverlayId = (val) => {
@@ -358,25 +378,29 @@ function parseNodeDetails(nodeDetails) {
         importance,
         functionText: mod.function || '',
         technicalText: mod.technical_methods || '',
+        collapsed: collapsed, // Track collapse state
       });
-      mod.sub_nodes.forEach((sn, sIdx) => {
-        const snId =
-          (sn.id && String(sn.id).trim()) ||
-          (sn.name && String(sn.name).trim()) ||
-          `${modName}_sub_${sIdx + 1}`;
-        nodes.push({
-          id: snId,
-          label: sn.name || snId,
-          desc: sn.brief_description || '',
-          isGroup: false,
-          parent: modName,
-          role,
-          lane,
-          importance,
-          functionText: sn.function || '',
-          technicalText: sn.technical_methods || '',
+      // Only add sub_nodes if not collapsed
+      if (!collapsed) {
+        mod.sub_nodes.forEach((sn, sIdx) => {
+          const snId =
+            (sn.id && String(sn.id).trim()) ||
+            (sn.name && String(sn.name).trim()) ||
+            `${modName}_sub_${sIdx + 1}`;
+          nodes.push({
+            id: snId,
+            label: sn.name || snId,
+            desc: sn.brief_description || '',
+            isGroup: false,
+            parent: modName,
+            role,
+            lane,
+            importance,
+            functionText: sn.function || '',
+            technicalText: sn.technical_methods || '',
+          });
         });
-      });
+      }
     } else {
       const role = mod.role || '';
       const lane = getRoleLane(role);
@@ -392,6 +416,7 @@ function parseNodeDetails(nodeDetails) {
         importance,
         functionText: mod.function || '',
         technicalText: mod.technical_methods || '',
+        collapsed: false,
       });
     }
 
@@ -400,14 +425,22 @@ function parseNodeDetails(nodeDetails) {
       let tgt = e.connects_to_internal_node || e.target_node || e.target_mod;
       if (!src || src === 'null' || src === 'None') src = modName;
       if (!tgt || tgt === 'null' || tgt === 'None') tgt = e.target_mod;
+
+      // If collapsed, only show module-level edges (skip internal_flow edges)
+      const isInternalEdge = (e.originates_from_internal_node && e.originates_from_internal_node !== modName);
+      if (collapsed && isInternalEdge) return;
+
       if (src && tgt) edges.push({ id: `out-${modName}-${i}`, source: src, target: tgt, label: e.edge_label || '', dashed: false });
     });
 
-    mod.ports?.internal_flow?.forEach((e, i) => {
-      const src = e.source_node, tgt = e.target_node;
-      if (src && tgt && src !== 'null' && src !== 'None' && tgt !== 'null' && tgt !== 'None')
-        edges.push({ id: `in-${modName}-${i}`, source: src, target: tgt, label: e.edge_label || '', dashed: true });
-    });
+    // Skip internal_flow edges when collapsed
+    if (!collapsed) {
+      mod.ports?.internal_flow?.forEach((e, i) => {
+        const src = e.source_node, tgt = e.target_node;
+        if (src && tgt && src !== 'null' && src !== 'None' && tgt !== 'null' && tgt !== 'None')
+          edges.push({ id: `in-${modName}-${i}`, source: src, target: tgt, label: e.edge_label || '', dashed: true });
+      });
+    }
   });
 
   const validIds = new Set(nodes.map(n => n.id));
@@ -490,23 +523,29 @@ function graphToNodeDetails(graph, originalNodeDetails) {
     };
 
     if (isGroup) {
-      entry.sub_nodes = (groupChildren[nodeId] || []).map(childId => {
-        const childNode = graph.getCellById(childId);
-        let childLabel = childNode?.attr('label/text') || childNode?.getProp('label') || childId;
-        // The text might contain both name and description separated by newline. Only take the first line as name.
-        if (childLabel && typeof childLabel === 'string') {
-          childLabel = childLabel.split('\n')[0].trim();
-        }
-        // 子节点查找逻辑
-        const origChild = orig.sub_nodes?.find(sn => sn.id === childId) || orig.sub_nodes?.find(sn => sn.name === childId) || {};
-        return {
-          id: childId,
-          name: childLabel,
-          brief_description: origChild.brief_description || '',
-          function: origChild.function || '',
-          technical_methods: origChild.technical_methods || ''
-        };
-      });
+      // If there are children in the graph, use them
+      if (groupChildren[nodeId] && groupChildren[nodeId].length > 0) {
+        entry.sub_nodes = groupChildren[nodeId].map(childId => {
+          const childNode = graph.getCellById(childId);
+          let childLabel = childNode?.attr('label/text') || childNode?.getProp('label') || childId;
+          // The text might contain both name and description separated by newline. Only take the first line as name.
+          if (childLabel && typeof childLabel === 'string') {
+            childLabel = childLabel.split('\n')[0].trim();
+          }
+          // 子节点查找逻辑
+          const origChild = orig.sub_nodes?.find(sn => sn.id === childId) || orig.sub_nodes?.find(sn => sn.name === childId) || {};
+          return {
+            id: childId,
+            name: childLabel,
+            brief_description: origChild.brief_description || '',
+            function: origChild.function || '',
+            technical_methods: origChild.technical_methods || ''
+          };
+        });
+      } else if (orig.sub_nodes && orig.sub_nodes.length > 0) {
+        // If collapsed (no children in graph), preserve original sub_nodes from the source data
+        entry.sub_nodes = orig.sub_nodes;
+      }
     }
 
     newDetails[nodeId] = entry;
@@ -539,11 +578,12 @@ function graphToNodeDetails(graph, originalNodeDetails) {
 }
 
 // ─── Render nodes+edges into an existing graph instance ──────────────────────
-function renderGraph(graph, nodeDetails) {
+function renderGraph(graph, nodeDetails, options = {}) {
+  const { collapsed = true } = options; // Default to collapsed view for initial render
   try {
     const t = Array.isArray(nodeDetails) ? 'array' : typeof nodeDetails;
     const n = Array.isArray(nodeDetails) ? nodeDetails.length : (nodeDetails ? Object.keys(nodeDetails).length : 0);
-    console.debug('[X6] renderGraph input:', t, n);
+    console.debug('[X6] renderGraph input:', t, n, 'collapsed:', collapsed);
   } catch (e) { void e; }
   try { graph.resetCells([]); } catch (e) { void e; }
   try { graph.clearCells(); } catch (e) { void e; }
@@ -561,7 +601,7 @@ function renderGraph(graph, nodeDetails) {
   let parsedNodes = [];
   let parsedEdges = [];
   try {
-    const parsed = parseNodeDetails(nodeDetails);
+    const parsed = parseNodeDetails(nodeDetails, { collapsed });
     parsedNodes = parsed.nodes;
     parsedEdges = parsed.edges;
   } catch (err) {
@@ -572,9 +612,13 @@ function renderGraph(graph, nodeDetails) {
   if (parsedNodes.length === 0) return;
 
   let positions = {};
+  let levelMap = {};
+  let childToParent = {};
   try {
     const layout = runRoleLayout(parsedNodes, parsedEdges);
     positions = layout.positions;
+    levelMap = layout.levelMap || {};
+    childToParent = layout.childToParent || {};
   } catch (e) {
     console.error('Layout error:', e);
     parsedNodes.forEach((n, i) => { positions[n.id] = { x: (i % 5) * 260, y: Math.floor(i / 5) * 100, w: NODE_W, h: NODE_H }; });
@@ -636,15 +680,27 @@ function renderGraph(graph, nodeDetails) {
     const descH = descLines.length > 0 ? descLines.length * 14 : 0;
     const overlayTop = 10 + titleH + (descH ? 6 + descH : 0);
     overlayTopMap[n.id] = overlayTop;
+
+    // If collapsed, render as a simple node instead of a group
+    const isCollapsed = n.collapsed === true;
+    const groupHeight = isCollapsed ? Math.max(pos.h, overlayTop + 20) : Math.max(pos.h, overlayTop + 80);
+
     const group = graph.addNode({
-      id: n.id, shape: 'rect', x: pos.x, y: pos.y, width: pos.w, height: pos.h, zIndex: 0,
+      id: n.id, shape: 'rect', x: pos.x, y: pos.y, width: pos.w, height: groupHeight, zIndex: 0,
       attrs: {
-        body: { fill: theme.fill, stroke: theme.stroke, strokeWidth: 2.2, strokeDasharray: '6 3', rx: 10, ry: 10 },
+        body: {
+          fill: theme.fill,
+          stroke: theme.stroke,
+          strokeWidth: 2.2,
+          strokeDasharray: isCollapsed ? '0' : '6 3', // Solid border when collapsed
+          rx: 10,
+          ry: 10
+        },
         label: { text: '', fontSize: 16, fontWeight: 'bold', fill: theme.text, refX: 0.5, refY: 0.5, textAnchor: 'middle', textVerticalAnchor: 'middle' },
       },
       ports: portsDef(n.id, n.lane),
     });
-    try { group.setData && group.setData({ overlayTop: overlayTop }); } catch (e) { void e; }
+    try { group.setData && group.setData({ overlayTop: overlayTop, collapsed: isCollapsed }); } catch (e) { void e; }
     const titleNode = graph.addNode({
       id: `${n.id}__hdr`,
       shape: 'rect',
@@ -687,10 +743,48 @@ function renderGraph(graph, nodeDetails) {
       },
       ports: { groups: {}, items: [] },
     });
+
+    // Add parallel/sequential indicator for expanded groups with sub-nodes
+    if (!isCollapsed && parsedEdges.some(e => e.dashed && (childToParent[e.source] === n.id || childToParent[e.target] === n.id))) {
+      // Has internal_flow edges → sequential pipeline
+      const seqIndicator = graph.addNode({
+        id: `${n.id}__seq`,
+        shape: 'rect',
+        x: pos.x + 8,
+        y: pos.y + overlayTop + 8,
+        width: 50,
+        height: 18,
+        zIndex: 6,
+        attrs: {
+          body: { fill: '#dbeafe', stroke: '#3b82f6', strokeWidth: 1, rx: 4, ry: 4 },
+          label: { text: '→ 串行', fontSize: 10, fontWeight: 600, fill: '#1e40af', textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5, pointerEvents: 'none' },
+        },
+        ports: { groups: {}, items: [] },
+      });
+      group.addChild(seqIndicator);
+    } else if (!isCollapsed) {
+      // No internal_flow edges → parallel components
+      const parIndicator = graph.addNode({
+        id: `${n.id}__par`,
+        shape: 'rect',
+        x: pos.x + 8,
+        y: pos.y + overlayTop + 8,
+        width: 50,
+        height: 18,
+        zIndex: 6,
+        attrs: {
+          body: { fill: '#dcfce7', stroke: '#22c55e', strokeWidth: 1, rx: 4, ry: 4 },
+          label: { text: '∥ 并行', fontSize: 10, fontWeight: 600, fill: '#15803d', textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5, pointerEvents: 'none' },
+        },
+        ports: { groups: {}, items: [] },
+      });
+      group.addChild(parIndicator);
+    }
+
     group.addChild(titleNode);
     if (iconNode) group.addChild(iconNode);
     group.addChild(descNode);
-    group.resize(pos.w, Math.max(pos.h, overlayTop + 80));
+    group.resize(pos.w, groupHeight);
   });
 
   // Leaf nodes
@@ -812,6 +906,18 @@ function renderGraph(graph, nodeDetails) {
     }
   });
 
+  // Detect feedback edges: source level >= target level (going backward or sideways in the DAG)
+  const getTopLevel = (nodeId) => {
+    const topId = childToParent[nodeId] || nodeId;
+    return levelMap[topId] ?? 0;
+  };
+  const isFeedbackEdge = (e) => {
+    if (e.dashed) return false; // internal_flow edges are not feedback
+    const srcLvl = getTopLevel(e.source);
+    const tgtLvl = getTopLevel(e.target);
+    return srcLvl >= tgtLvl && e.source !== e.target;
+  };
+
   // Edges — spread edges sharing the same source or same target to avoid overlap
   const pairCount = {};
   const pairIndex = {};
@@ -850,18 +956,39 @@ function renderGraph(graph, nodeDetails) {
     const tgtStep = 18;
     const tgtOffset = tgtTotal === 1 ? 0 : (ti - (tgtTotal - 1) / 2) * tgtStep;
 
-    const labels = e.label
+    const feedback = isFeedbackEdge(e);
+
+    // Feedback edges: orange dashed arc with "↩ when: ..." label prefix
+    // Forward edges: solid dark straight line
+    const edgeColor = feedback ? '#f97316' : (e.dashed ? '#94a3b8' : '#64748b');
+    const edgeStrokeWidth = feedback ? 1.4 : (e.dashed ? 1.3 : 1.6);
+    const edgeDash = feedback ? '8 4' : (e.dashed ? '7 5' : '0');
+
+    // Prefix feedback edge labels with a trigger indicator
+    let labelText = e.label || '';
+    if (feedback && labelText) {
+      // If label doesn't already start with a trigger keyword, prefix it
+      const triggerPrefixes = ['when', 'if', 'on', '↩', 'trigger', 'after', 'upon'];
+      const lowerLabel = labelText.toLowerCase();
+      const hasTrigger = triggerPrefixes.some(p => lowerLabel.startsWith(p));
+      if (!hasTrigger) labelText = `↩ when: ${labelText}`;
+    } else if (feedback && !labelText) {
+      labelText = '↩ feedback';
+    }
+
+    const labels = labelText
       ? [{
         attrs: {
           label: {
-            text: e.label,
-            fontSize: 11,
-            fontWeight: 600,
-            fill: '#334155',
+            text: labelText,
+            fontSize: feedback ? 10 : 11,
+            fontWeight: feedback ? 500 : 600,
+            fill: feedback ? '#c2410c' : '#334155',
+            fontStyle: feedback ? 'italic' : 'normal',
           },
           rect: {
-            fill: '#ffffff',
-            stroke: '#cbd5e1',
+            fill: feedback ? '#fff7ed' : '#ffffff',
+            stroke: feedback ? '#fed7aa' : '#cbd5e1',
             strokeWidth: 1,
             rx: 3,
             ry: 3,
@@ -874,26 +1001,45 @@ function renderGraph(graph, nodeDetails) {
         position: { distance: 0.5, offset: parallelOffset },
       }]
       : [];
+
+    // Feedback edges use a smooth curved arc routed above/below the main flow
+    // Forward edges use manhattan orthogonal routing
+    const edgeRouter = feedback
+      ? {
+          name: 'manhattan',
+          args: {
+            padding: { top: 60, bottom: 60, left: 60, right: 60 },
+            startDirections: ['bottom', 'top'],
+            endDirections: ['bottom', 'top'],
+          },
+        }
+      : {
+          name: 'manhattan',
+          args: {
+            padding: { top: 40, bottom: 40, left: 48, right: 48 },
+            startDirections: ['top', 'bottom', 'left', 'right'],
+            endDirections: ['top', 'bottom', 'left', 'right'],
+          },
+        };
+
+    const edgeConnector = feedback
+      ? { name: 'smooth' }
+      : { name: 'rounded', args: { radius: 10 } };
+
     graph.addEdge({
       id: e.id,
       source: { cell: e.source, anchor: { name: 'center', args: { dy: srcOffset } } },
       target: { cell: e.target, anchor: { name: 'center', args: { dy: tgtOffset } } },
-      dashed: e.dashed, zIndex: 2,
-      router: {
-        name: 'manhattan',
-        args: {
-          padding: { top: 40, bottom: 40, left: 48, right: 48 },
-          startDirections: ['top', 'bottom', 'left', 'right'],
-          endDirections: ['top', 'bottom', 'left', 'right'],
-        },
-      },
-      connector: { name: 'rounded', args: { radius: 10 } },
+      dashed: e.dashed,
+      zIndex: feedback ? 1 : 2, // feedback edges render behind forward edges
+      router: edgeRouter,
+      connector: edgeConnector,
       attrs: {
         line: {
-          stroke: e.dashed ? '#94a3b8' : '#64748b',
-          strokeWidth: e.dashed ? 1.3 : 1.6,
-          strokeDasharray: e.dashed ? '7 5' : '0',
-          targetMarker: { name: 'block', size: 7, fill: e.dashed ? '#94a3b8' : '#64748b' },
+          stroke: edgeColor,
+          strokeWidth: edgeStrokeWidth,
+          strokeDasharray: edgeDash,
+          targetMarker: { name: 'block', size: 7, fill: edgeColor },
         },
       },
       labels,
@@ -923,6 +1069,7 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
   const onPaneClickRef = useRef(onPaneClick);
   const onNodeDetailsChangeRef = useRef(onNodeDetailsChange);
   const pendingRenderRef = useRef(null);  // Queues data that arrived before graph was ready
+  const [isCollapsed, setIsCollapsed] = useState(true); // Track collapse state
   nodeDetailsRef.current = nodeDetails;
   onNodeClickRef.current = onNodeClick;
   onPaneClickRef.current = onPaneClick;
@@ -1234,7 +1381,7 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
       if (hasDetails) {
         isRenderingRef.current = true;
         try {
-          renderGraph(g, detailsToRender);
+          renderGraph(g, detailsToRender, { collapsed: true }); // Start with collapsed view
         } finally {
           isRenderingRef.current = false;
         }
@@ -1283,11 +1430,11 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
     }
     isRenderingRef.current = true;
     try {
-      renderGraph(graphRef.current, nodeDetails);
+      renderGraph(graphRef.current, nodeDetails, { collapsed: isCollapsed });
     } finally {
       isRenderingRef.current = false;
     }
-  }, [nodeDetails, createGraphInstance]);
+  }, [nodeDetails, createGraphInstance, isCollapsed]);
 
   // ── Keyboard: delete/backspace remove selected ────────────────────────────
   useEffect(() => {
@@ -1507,6 +1654,10 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
     syncToJson();
   }, [syncToJson]);
 
+  const handleToggleCollapse = useCallback(() => {
+    setIsCollapsed(prev => !prev);
+  }, []);
+
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} tabIndex={0} />
@@ -1514,6 +1665,13 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
         <button title="放大" onClick={() => graphRef.current?.zoom(0.1)} style={btnStyle}>+</button>
         <button title="缩小" onClick={() => graphRef.current?.zoom(-0.1)} style={btnStyle}>−</button>
         <button title="适应画布" onClick={() => graphRef.current?.zoomToFit({ padding: 40, maxScale: 1.2 })} style={btnStyle}>⊡</button>
+        <button
+          title={isCollapsed ? "展开子节点" : "折叠子节点"}
+          onClick={handleToggleCollapse}
+          style={{ ...btnStyle, backgroundColor: isCollapsed ? '#f59e0b' : '#10b981', color: '#fff', borderColor: isCollapsed ? '#f59e0b' : '#10b981' }}
+        >
+          {isCollapsed ? '📦 展开' : '📋 折叠'}
+        </button>
         <button title="添加节点" onClick={handleAddNode} style={{ ...btnStyle, backgroundColor: '#217cf3', color: '#fff', borderColor: '#217cf3' }}>+ 模块</button>
         <button title="添加子节点" onClick={handleAddSubNode} style={{ ...btnStyle, backgroundColor: '#217cf3', color: '#fff', borderColor: '#217cf3' }}>+ 子节点</button>
       </div>
