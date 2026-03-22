@@ -774,15 +774,16 @@ User-facing text: primarily Chinese; proper nouns/essential technical terms may 
 ## Steps
 **1. Main Storyline** — define a clear end-to-end functional mainline; write it as `overall_description`.
 
-**2. Define Modules** — cover all mainline steps (including all Base Anchors) plus supporting nodes that connect to the mainline. Target 8–12 well-defined modules; completeness outweighs brevity.
+**2. Define Modules** — cover all mainline steps (including all Base Anchors) plus supporting nodes that connect to the mainline. Target 3–5 TOP-LEVEL modules for the initial overview; you can use sub_nodes to organize internal complexity.
 - **Naming**: action-oriented, no structural suffixes ("模块/单元/引擎/系统/组件/层"). ✓ "优先级动态分析" ✗ "动态优先级与资源决策模块". No paper titles or algorithm names as node names.
 - **Information nodes** (for key data artifacts central to user understanding, e.g. "风险提示", "任务上下文"): name describes the information, not the process. Use sparingly — prefer function-oriented nodes for backend logic.
 - **Descriptions**: `function` and `technical_methods` must be detailed and grounded in retrieved info — no fabrication, no vague summaries. Explain HOW methods work and WHY they fit.
-- **Subnodes**: define them when retrieved info reveals meaningful internal steps; map their internal data flow explicitly.
+- **Subnodes**: Use sub_nodes to organize internal complexity. When a module has multiple internal steps, define them as sub_nodes rather than creating many top-level modules. This keeps the first impression clean while preserving detail.
 - Integrate all divergent-plan nodes meaningfully.
 
 **3. Connect the Flow**
 - Build a clear primary end-to-end flow; each module needs only its minimum necessary connections.
+- **IMPORTANT**: For the initial architecture overview, focus on the MAIN LINEAR FLOW from input to output. Minimize secondary edges (feedback loops, cross-connections, auxiliary flows) to keep the first impression simple and clear.
 - Default to module-level connections; use subnode-level only when the subnode is the true locus of computation and hiding it would obscure a key mechanism.
 - `source_mod` / `target_mod` must reference names defined in `module_details` — no phantom nodes.
 - Merge parallel edges between the same pair of nodes. Preserve literature-validated flow order where applicable.
@@ -798,6 +799,12 @@ Use compact string format for `ports` to save space:
 - `outgoing`: "TargetMod->edge_label" or "TargetMod.tgtSubNode->edge_label"
 - `internal_flow`: "SubA->SubB->edge_label"
 
+**Edge Label Guidelines**:
+- For **forward flow edges** (normal progression): describe the data/information being passed (e.g., "处理结果", "用户输入", "分析报告")
+- For **feedback/loop edges** (returning to earlier stages): describe the trigger condition or control signal (e.g., "检测到异常时", "优先级变化", "需要重新评估", "质量不达标")
+- Keep labels concise (2-6 characters ideal for Chinese, 3-8 words for English)
+- Avoid generic labels like "数据" or "信息" — be specific about what flows or when it triggers
+
 {{
     "overall_description": "...",
     "module_details": [
@@ -810,9 +817,9 @@ Use compact string format for `ports` to save space:
             "references": "exact names from Retrieved Modules or 'None'",
             "sub_nodes": [{{"name":"...","function":"...","technical_methods":"..."}}],
             "ports": {{
-                "incoming": ["ModA->数据标签", "ModB.SubX->控制信号"],
-                "outgoing": ["ModC->处理结果"],
-                "internal_flow": ["SubA->SubB->中间数据"]
+                "incoming": ["ModA->分析结果", "ModB.SubX->控制信号"],
+                "outgoing": ["ModC->处理后数据", "ModA->检测到异常时"],
+                "internal_flow": ["SubA->SubB->中间结果"]
             }}
         }}
     ]
