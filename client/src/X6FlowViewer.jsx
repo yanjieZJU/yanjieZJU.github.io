@@ -1133,17 +1133,24 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
       panning: { enabled: true, eventTypes: ['leftMouseDown', 'mouseWheel'] },
       mousewheel: { enabled: true, modifiers: null },
       connecting: {
-        router: 'orth',
-        connector: { name: 'rounded', args: { radius: 12 } },
-        anchor: 'center',
+        router: {
+          name: 'manhattan',
+          args: {
+            padding: { top: 40, bottom: 40, left: 48, right: 48 },
+            startDirections: ['top', 'bottom', 'left', 'right'],
+            endDirections: ['top', 'bottom', 'left', 'right'],
+          },
+        },
+        connector: { name: 'rounded', args: { radius: 10 } },
+        anchor: 'nodeCenter',
         connectionPoint: 'boundary',
         allowBlank: false,
         allowLoop: false,
         highlight: true,
         createEdge() {
           return new Shape.Edge({
-            attrs: { line: { stroke: '#7b8ea6', strokeWidth: 1.55, targetMarker: { name: 'block', size: 8, fill: '#7b8ea6' } } },
-            zIndex: 0,
+            attrs: { line: { stroke: '#64748b', strokeWidth: 1.6, targetMarker: { name: 'block', size: 7, fill: '#64748b' } } },
+            zIndex: 2,
           });
         },
       },
