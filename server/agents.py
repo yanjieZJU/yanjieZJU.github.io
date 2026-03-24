@@ -267,14 +267,25 @@ class PlannerAgent:
         # Pre-fetch community summaries for all selected references in parallel
         def _fetch_summaries_for_ref(ref):
             if ref["type"] == "NEAR_FIELD_MISSING" or ref["cluster_id"] is None:
-                return ref["cluster_id"], []
+                return ref["cluster_id"], [], []
             c_id = ref["cluster_id"]
             cluster_data = self.topology_knowledge["scene_clusters"][c_id]
             comm_dist = cluster_data.get("community_distribution", {})
             sorted_comms = sorted(comm_dist.items(), key=lambda x: x[1], reverse=True)
-            relevant_comm_ids = [c[0] for c in sorted_comms[:6]]
-            if not relevant_comm_ids:
-                return c_id, []
+            if not sorted_comms:
+                return c_id, [], []
+
+            # Top-3 dominant communities
+            top_comm_ids = [c[0] for c in sorted_comms[:3]]
+
+            # 2 random tail communities (rank 6–20, low-weight but domain-specific)
+            tail_candidates = [c[0] for c in sorted_comms[5:20]]
+            import random
+            tail_comm_ids = random.sample(tail_candidates, min(2, len(tail_candidates)))
+
+            relevant_comm_ids = top_comm_ids + tail_comm_ids
+            tail_set = set(tail_comm_ids)
+
             def _fetch_comm_summaries(tx, comm_ids):
                 cypher = """
                 MATCH (n:LlamaNode)
@@ -287,16 +298,32 @@ class PlannerAgent:
                 records = run_with_retry(
                     lambda: execute_read_with_session(self.graph_store._driver, _fetch_comm_summaries, relevant_comm_ids)
                 )
-                return c_id, [f"- [Community {r['id']}]: {r['summary']}" for r in records]
+                lines = []
+                for r in records:
+                    tag = " *(long-tail — distinctive niche)*" if r['id'] in tail_set else ""
+                    lines.append(f"- [Community {r['id']}]{tag}: {r['summary']}")
+                return c_id, lines, relevant_comm_ids
             except Exception as e:
                 print(f"⚠️ Failed to fetch community summaries for planning: {e}")
-                return c_id, []
+                return c_id, [], []
 
         refs_needing_fetch = [r for r in selected_references if r["type"] != "NEAR_FIELD_MISSING" and r["cluster_id"] is not None]
-        comm_summaries_cache = {}
+        comm_summaries_cache = {}   # c_id -> lines
+        comm_ids_cache = {}         # c_id -> list of community ids shown to LLM
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(refs_needing_fetch) or 1) as _ex:
-            for c_id, lines in _ex.map(_fetch_summaries_for_ref, refs_needing_fetch):
-                comm_summaries_cache[c_id] = lines
+            for c_id, lines, comm_ids in _ex.map(_fetch_summaries_for_ref, refs_needing_fetch):
+                if c_id is not None:
+                    comm_summaries_cache[c_id] = lines
+                    comm_ids_cache[c_id] = comm_ids
+
+        # Build cross-plan shared community set for dedup hint
+        all_comm_id_lists = list(comm_ids_cache.values())
+        if len(all_comm_id_lists) >= 2:
+            from collections import Counter
+            flat = [cid for lst in all_comm_id_lists for cid in lst]
+            shared_communities = {cid for cid, cnt in Counter(flat).items() if cnt > 1}
+        else:
+            shared_communities = set()
 
         for idx, ref in enumerate(selected_references):
             if ref["type"] == "NEAR_FIELD_MISSING":
@@ -339,6 +366,14 @@ class PlannerAgent:
             """
             reference_context_str += ref_block
 
+        # Append shared-community hint so LLM knows which ones to avoid overusing
+        if shared_communities:
+            reference_context_str += f"""
+            ### Cross-Source Note
+            Communities {sorted(shared_communities)} appear in **multiple** sources above.
+            These are general-purpose communities shared across domains. When assigning `community_id` to additional_anchors, **prefer the long-tail communities** (marked with "long-tail") over the shared ones to maximize differentiation between plans.
+            """
+
         prompt = f"""
         You are a creative System Architect. You are required to design a system based on the user's requirements. Remember that you are facing a designer, so do not use too much technical jargon (like xxx algorithm, engine, neural network, etc.).
         
@@ -363,19 +398,21 @@ class PlannerAgent:
         {reference_context_str}
         
         ## Requirements by Plan
-        
+
         **Plan 1 (Deep Optimization)**:
         - Use **Source 1** (Near-Field) as your inspiration.
-        - If Source 1 states "No papers highly relevant", explicitly mention "No papers highly relevant to this system were retrieved" in your rationale, and rely on general HCI knowledge to professionalize the system.
+        - If Source 1 states "No papers highly relevant", **do NOT introduce external perspectives or unrelated domains**. Instead, focus strictly on the user's own scenario: deeply analyze the Base Anchors and the user's requirements to propose functional enhancements that are a **natural, direct extension** of the existing system. All additional_anchors must directly serve the user's stated goal.
         - Focus on discovering **innovative and feasible functional embeddings** and deep professional details missing from the Base Anchors. Focus on the most advanced or unique technical methods in the community summaries, rather than conventional ones.
-        
+
         **Plan 2 (Cross-Domain Inspiration)** (If requested):
-        - Use **Source 2** (Far-Field) as your inspiration. Try to answer: "How would an expert with new tech in Source 2 solve the problems in the User's query?"
+        - Use **Source 2** (Far-Field) as your inspiration. Clearly define the core mechanism and advantages of this analogy, and ensure that it significantly differs from other plans.
         - Focus on **innovative cross-domain transfer**: Instead of just introducing conventional ideas, extract typical processing patterns, novel technologies or main implementation methods from Source 2 that can significantly improve the performance of the system.
         - Perform **Concept Blending**: specific methods from Source 2 (e.g., "Medical Monitoring") should be metaphorically and innovatively transferred to the User's domain (e.g., "Education Monitoring").
-        
+        - **CRITICAL**: Cross-domain transfer must stay grounded in the user's scenario. The resulting additional_anchors must be recognizable as serving the user's stated goal. Do NOT simply import modules wholesale from Source 2 — they must be adapted, renamed, and functionally redefined in the user's context.
+
         **Plan 3+** (If requested):
         - Use **Source 3+** similarly to propose a DISTINCT innovative functional embedding, differing in implementation methods or referenced technologies from previous plans.
+        - Apply the same grounding constraint as Plan 2: all anchors must clearly serve the user's stated scenario.
 
         ## General Constraint
         1. When you add new functions, always consider its *feasibility* in the given context.
@@ -388,20 +425,28 @@ class PlannerAgent:
         4. **Specific Anchors**:
            - Each additional component must have a 'user_term', a 'description', a 'role', and a 'community_id' (from the reference source).
            - Recheck data flow logic.
+        5. **Cross-Plan Differentiation (CRITICAL)**:
+           - Before finalizing your output, review ALL plans together. **No two plans may share more than 1 anchor with the same `community_id`.**
+           - If two plans would share a community_id on more than 1 anchor, replace the overlapping anchor in the lower-priority plan with a module grounded in a **long-tail community** (marked "long-tail" in the source, which appears less frequently but is more innovative ) or a different community entirely.
+           - The `perspective` phrases of all plans must be meaningfully different — they must highlight distinct functional innovations, not just rephrase the same concept.
 
         ### Role Taxonomy
         {TAXONOMY}\n\n
+
+        ## Naming and Description Rules for Anchors
+        - **user_term**: Must be scenario-specific — include concrete nouns from the user's domain (e.g., if the system is about "采摘机器人", use "采摘任务分配" not "任务分配", "果实识别" not "目标识别"). Short (2–8 chars), action or object oriented.
+        - **description**: Must explicitly state (1) what data/input this module receives, (2) what it does to that data, and (3) what output it produces. Example format: "接收[输入]，通过[处理方式]，输出[输出结果]". Avoid abstract summaries like "进行智能决策" — say exactly WHAT decision, based on WHAT input.
 
         ## Output Structure (JSON)
         {{
             "plans": [
                 {{
                     "perspective": "use one short phrase to describe the perspective, highlighting the key functions or biggest advantages and innovations of this design (e.g., 'Immersive interactive feedback'). Do not just copy the perspective title or vague terms like 'cross-domain'",
-                    "rationale": "Explain explicitly: 'Inspired by [Source Name], we introduced [Feature] to achieve [Goal]...'",
+                    "rationale": "Explain explicitly: 'Inspired by [Source Name], we introduced [Feature] to achieve [Goal]...' Ground it in the user's specific scenario.",
                     "additional_anchors": [
                         {{
-                            "user_term": "Specific Module Name",
-                            "description": "Functional description",
+                            "user_term": "Scenario-specific module name (e.g., '果实成熟度识别' not '目标识别')",
+                            "description": "接收[具体输入]，通过[具体处理]，输出[具体结果]",
                             "role": "category: subcategory",
                             "community_id": "ID from Source text, use NONE if no match"
                         }}
@@ -758,6 +803,39 @@ You are a professional HCI system architect. Design a complete pipeline for the 
 ## Base Anchors (MANDATORY — include ALL)
 {json.dumps(base_anchors, ensure_ascii=False) if base_anchors else "None provided"}
 
+## Language Policy
+User-facing text: primarily Chinese; proper nouns/essential technical terms may stay in English.
+
+## Steps
+**1. Main Storyline** — define a clear end-to-end functional mainline; write it as `overall_description`.
+
+**2. Define inputs & outputs** - define the system's system-level inputs (external data sources, sensors, user actions) and outputs (what the system delivers to users or downstream systems). Present each as a dedicated input/output module with sub_nodes listing the **specific data types** (e.g., for a harvesting robot: input sub_nodes = "RGB图像流", "机器人位置信号", "任务指令"; output sub_nodes = "采摘进度报告", "异常预警信息"). Use concrete domain-specific names, not generic terms like "输入数据" or "输出结果".
+
+**3. Define Functional Modules** — cover all mainline steps (including all Base Anchors) that connect to the mainline. Target 3–5 TOP-LEVEL modules for the initial overview; you can use sub_nodes to organize internal complexity.
+- **Naming (CRITICAL)**: action-oriented, **scenario-specific** — the name must include concrete nouns from the user's domain (e.g., for a harvesting robot system: "采摘任务进度追踪" not "多维进度跟踪"; "果实识别与定位" not "目标检测"; "机器人状态分析" not "多维状态综合评估"). No structural suffixes ("模块/单元/引擎/系统/组件/层"). No paper titles or algorithm names.
+- **Data flow clarity**: For each module, clearly distinguish what comes IN (inputs) and what goes OUT (outputs). Input/output modules must list specific data types as sub_nodes (e.g., "RGB图像流", "任务分配指令", not just "数据" or "信息"). Functional modules must describe in `function` field: "接收[具体输入]，执行[具体操作]，输出[具体结果]".
+- **Information nodes** (for key data artifacts central to user understanding, e.g. "风险提示", "任务上下文"): name describes the information, not the process. Use sparingly — prefer function-oriented nodes for backend logic.
+- **Descriptions**: `function` and `technical_methods` must be detailed and grounded in retrieved info — no fabrication, no vague summaries. Explain HOW methods work and WHY they fit. Always reference the user's specific scenario context.
+  - `function`: At least 1 complete sentence. Must clearly state (1) what specific data/input this module receives, (2) what it does to that data, and (3) what output it produces. Never stop mid-sentence or leave the reader guessing.
+  - `technical_methods`: **minimum 2 complete sentences**. Name the concrete technique, explain how it works in this domain, and state why it was chosen over alternatives.
+  - Apply the same depth requirement to **sub_nodes** — each sub_node's `function` and `technical_methods` must also be at least 2 complete sentences, not one-liners.
+- **Subnodes**: Use sub_nodes to organize internal complexity. When a module has multiple internal steps, define them as sub_nodes rather than creating many top-level modules. This keeps the first impression clean while preserving detail.
+  - **Sub_node naming (CRITICAL)**: Sub_node names must be MORE specific than the parent module name. They must encode (a) the concrete domain object being processed (e.g., "货位空闲状态" not "状态分析"), (b) any key constraint or condition (e.g., "优先级变化时" or "超重预警"), and (c) the specific action performed. Avoid generic verbs like "处理/分析/检测" without a domain noun attached (e.g., use "货位冲突检测" not "异常检测").
+  - Sub_node `function` must follow the same IPO format as top-level: "接收[具体输入]，执行[具体操作]，输出[具体结果]". Minimum 1 complete sentence. Do NOT use vague one-liners like "负责处理数据" or "用于优化性能".
+  - Sub_node `technical_methods`: minimum 2 complete sentences. Name the concrete technique, explain how it applies specifically to THIS sub_node's domain context (not a generic description), and state a specific constraint or trigger condition under which it activates.
+- Integrate all divergent-plan nodes meaningfully.
+
+**4. Connect the Flow**
+- Build a clear primary end-to-end flow; each module needs ONLY its MINIMUN necessary connections (no more than 2 input/output ports). 
+- **IMPORTANT**: For the initial architecture overview, focus on the MAIN LINEAR FLOW from input to output. Minimize secondary edges (feedback loops, cross-connections, auxiliary flows) to keep the first impression simple and clear.
+- Default to module-level connections; use subnode-level only when the subnode is the true locus of computation and hiding it would obscure a key mechanism.
+- `source_mod` / `target_mod` must reference names defined in `module_details` — no phantom nodes.
+- Merge parallel edges between the same pair of nodes. Preserve literature-validated flow order where applicable.
+
+**5. Final Check**
+- Remove only true duplicates (same function AND same data flow endpoints).
+- Reconnect isolated nodes if possible; remove only if unreachable and content-free.
+
 ## Reference Material
 **Retrieved Modules** — ground `function`/`technical_methods` in these; abstract away paper names; merge similar nodes.
 **Structural Paths** — treat as ground truth for data-flow order.
@@ -767,31 +845,6 @@ You are a professional HCI system architect. Design a complete pipeline for the 
 Retrieved Modules: {json.dumps(slim_retrieved_info, ensure_ascii=False)}
 
 Structural Paths: {hints_text}
-
-## Language Policy
-User-facing text: primarily Chinese; proper nouns/essential technical terms may stay in English.
-
-## Steps
-**1. Main Storyline** — define a clear end-to-end functional mainline; write it as `overall_description`.
-
-**2. Define Modules** — cover all mainline steps (including all Base Anchors) plus supporting nodes that connect to the mainline. Target 3–5 TOP-LEVEL modules for the initial overview; you can use sub_nodes to organize internal complexity.
-- **Naming**: action-oriented, no structural suffixes ("模块/单元/引擎/系统/组件/层"). ✓ "优先级动态分析" ✗ "动态优先级与资源决策模块". No paper titles or algorithm names as node names.
-- **Information nodes** (for key data artifacts central to user understanding, e.g. "风险提示", "任务上下文"): name describes the information, not the process. Use sparingly — prefer function-oriented nodes for backend logic.
-- **Descriptions**: `function` and `technical_methods` must be detailed and grounded in retrieved info — no fabrication, no vague summaries. Explain HOW methods work and WHY they fit.
-- **Subnodes**: Use sub_nodes to organize internal complexity. When a module has multiple internal steps, define them as sub_nodes rather than creating many top-level modules. This keeps the first impression clean while preserving detail.
-- Integrate all divergent-plan nodes meaningfully.
-
-**3. Connect the Flow**
-- Build a clear primary end-to-end flow; each module needs only its minimum necessary connections.
-- **IMPORTANT**: For the initial architecture overview, focus on the MAIN LINEAR FLOW from input to output. Minimize secondary edges (feedback loops, cross-connections, auxiliary flows) to keep the first impression simple and clear.
-- Default to module-level connections; use subnode-level only when the subnode is the true locus of computation and hiding it would obscure a key mechanism.
-- `source_mod` / `target_mod` must reference names defined in `module_details` — no phantom nodes.
-- Merge parallel edges between the same pair of nodes. Preserve literature-validated flow order where applicable.
-
-**4. Final Check**
-- Remove only true duplicates (same function AND same data flow endpoints).
-- Reconnect isolated nodes if possible; remove only if unreachable and content-free.
-
 
 ## Output (JSON)
 Use compact string format for `ports` to save space:
@@ -806,16 +859,16 @@ Use compact string format for `ports` to save space:
 - Avoid generic labels like "数据" or "信息" — be specific about what flows or when it triggers
 
 {{
-    "overall_description": "...",
+    "overall_description": "A plan description for less than 100 words, the structure is 'With [the core innovation of perspective] as the core design concept, this system is based on [core processing mechanism], [how to deal with the core challenges of the user scenarios]. [key functional modules and primary path of the data flow].'",
     "module_details": [
         {{
             "name": "module name",
             "brief_description": "one sentence, scenario-specific, no jargon",
-            "function": "detailed role and importance",
-            "technical_methods": "specific methods, HOW they work, WHY chosen",
+            "function": "what specific inputs this module receives, what operation it performs on them, and what output it produces",
+            "technical_methods": "name the concrete technique, explain HOW it processes data in this domain, and WHY it was chosen",
             "role": "input|output|processing|data",
             "references": "exact names from Retrieved Modules or 'None'",
-            "sub_nodes": [{{"name":"...","function":"...","technical_methods":"..."}}],
+            "sub_nodes": [{{"name":"scenario-specific action+object (e.g., '货位冲突检测' not '异常检测')","function":"≥1 sentence: 接收[具体输入]，执行[具体操作]，输出[具体结果]","technical_methods":"≥2 sentences: name technique + how it works in this domain + activation condition"}}],
             "ports": {{
                 "incoming": ["ModA->分析结果", "ModB.SubX->控制信号"],
                 "outgoing": ["ModC->处理后数据", "ModA->检测到异常时"],
@@ -1098,10 +1151,11 @@ class EditorAgent:
         - In final output, user-facing textual fields should be primarily in Chinese.
         - Proper nouns and indispensable technical terms may remain in English.
 
-        **Semantics Rule for Module and Subnodes**: 
-            - For functional modules, use concise, plain-language names that describe *what the node does*, not what it is. Avoid generic structural suffixes like "模块", "单元", "矩阵", "引擎", "系统", "组件", "层", "网络". Instead of "优先级解释展示单元" use "优先级解释"; instead of "动态优先级与资源决策模块" use "优先级动态分析"; instead of "任务特征抽取单元" use "任务特征提取". DO NOT directly copy wording from the paper. DO NOT use technical labels (such as parser, engine, neural network, etc.) or long implementation names (e.g. NOT "Gaze360: Physically Unconstrained...").
+        **Semantics Rule for Module and Subnodes**:
+            - **Naming (CRITICAL)**: action-oriented, **scenario-specific** — include concrete nouns from the user's domain. The name must be immediately understandable to a non-expert in the specific application context. No structural suffixes ("模块/单元/引擎/系统/组件/层"). No paper titles or algorithm names. Examples: "进度跟踪模块"→"采摘任务进度追踪"; "多维状态综合评估"→"机器人状态分析评估"; "沉浸式虚拟仿真"→"AR仓库场景映射"
+            - **function field**: explicitly state (1) what data/input this module receives, (2) what specific operation it performs, (3) what output it produces. Do NOT use vague phrases like "进行分析" or "实现决策" — say exactly WHAT is analyzed, WHAT decision is made.
             - A node can represent a key information unit when that information is central to user input, system output, or human understanding of the workflow. For these nodes, their name should describe the information being captured, organized or presented. Examples: "风险提示", "进度摘要", "任务上下文"; Avoid generic names such as "信息处理", "数据展示", "内容模块"
-               - Avoid creating information-oriented nodes for every minor label, attribute, or annotation.
+               - Avoid creating information-oriented nodes for every minor label, attribute, or annotation. Prefer them in the input/output nodes.
                - Prefer function-oriented nodes for backend processing, control, analysis, and transformation.
             - Ensure the added nodes from the divergent plans are integrated meaningfully.
             - **Provide detailed descriptions for both `function` and `technical_methods` from the retrieved information BUT DO NOT FABRICATE.** You must explicitly articulate the module's specific role, core responsibilities, and crucial importance within the overall system. Explain exactly HOW the technical methods work, process data, and why they were chosen, avoiding brief or vague summaries.
@@ -1114,7 +1168,7 @@ class EditorAgent:
         2. **Preservation**: Keep existing modules unless asked to remove them.
         3. **Consistency**: Ensure the graph remains connected and logical.
         4. **Integrity**: Ensure all `source_mod` and `target_mod` in ports refer to valid keys in `module_details`.
-        5. **Naming Rule**: When adding or renaming nodes, use concise plain-language names that describe *what the node does*. Avoid generic structural suffixes like "模块", "单元", "矩阵", "引擎", "系统", "组件", "层", "网络". For example: "优先级解释" not "优先级解释展示单元"; "优先级动态分析" not "动态优先级与资源决策模块"; "任务特征提取" not "任务特征抽取单元".
+        5. **Naming Rule**: When adding or renaming nodes, use concise **scenario-specific** names that describe *what the node does in this specific application context*. Include domain nouns from the user's system (e.g., "采摘", "果园", "机器人" for a harvesting robot system). Avoid generic structural suffixes like "模块", "单元", "矩阵", "引擎", "系统", "组件", "层", "网络". For example: "优先级解释" not "优先级解释展示单元"; "采摘任务动态调度" not "动态优先级与资源决策模块"; "果实特征提取" not "任务特征抽取单元".
         
         
         ## Final Output Format

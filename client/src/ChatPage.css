@@ -479,3 +479,14 @@
   gap: 10px;
   flex: 1;
 }
+
+.chat-rag-badge {
+  margin-top: 6px;
+  font-size: 0.72rem;
+  color: #888;
+  border-top: 1px solid rgba(0,0,0,0.06);
+  padding-top: 4px;
+}
+.chat-rag-badge span {
+  cursor: default;
+}

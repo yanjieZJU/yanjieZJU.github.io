@@ -102,6 +102,7 @@ async function exportLogs() {
 // ── Message bubble ──────────────────────────────────────────────────────────
 function MessageBubble({ msg }) {
   const isUser = msg.role === 'user';
+  const src = msg.ragSources;
 
   return (
     <div className={`chat-message ${isUser ? 'chat-message--user' : 'chat-message--assistant'}`}>
@@ -114,6 +115,19 @@ function MessageBubble({ msg }) {
           <span className="chat-error">{msg.content}</span>
         ) : (
           msg.content && <span className="chat-text">{msg.content}</span>
+        )}
+        {src && (
+          <div className="chat-rag-badge">
+            {src.ready && src.count > 0 ? (
+              <span title={src.titles?.join('\n')}>
+                📚 参考了 {src.count} 篇文献（检索词：{src.query}）
+              </span>
+            ) : src.ready ? (
+              <span>📭 未检索到相关文献（检索词：{src.query}）</span>
+            ) : (
+              <span>⚠️ 知识库未就绪，未使用文献增强</span>
+            )}
+          </div>
         )}
         <span className="chat-ts">{new Date(msg.timestamp).toLocaleTimeString()}</span>
       </div>
@@ -150,9 +164,10 @@ export default function ChatPage() {
   const listRef = useRef(null);
   const inputRef = useRef(null);
 
-  // Load sessions on mount
+  // Load sessions on mount + trigger RAG warmup
   useEffect(() => {
     getAllSessions().then(setSessionList);
+    fetch(`${API_BASE}/warmup/rag`, { method: 'POST' }).catch(() => {});
   }, []);
 
   // auto-scroll to bottom
@@ -221,6 +236,7 @@ export default function ChatPage() {
               updateLastAssistant({ content: fullContent });
             } else if (evt.type === 'done') {
               setRagQuery(null);
+              if (evt.rag_sources) updateLastAssistant({ ragSources: evt.rag_sources });
             } else if (evt.type === 'error') {
               setRagQuery(null);
               updateLastAssistant({ type: 'error', content: evt.message });

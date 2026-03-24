@@ -214,14 +214,20 @@ function runRoleLayout(nodes, edges) {
       const titleH = Math.max(20, titleLines.length * 16);
       const descH = descLines.length > 0 ? descLines.length * 14 : 0;
       overlayTop = 10 + titleH + (descH ? 6 + descH : 0);
-      const childTop = overlayTop + 16;
-      const groupChildren = nodes.filter(c => c.parent === n.id).sort((a, b) => String(a.id).localeCompare(String(b.id)));
-      let childrenTotalH = 0;
-      groupChildren.forEach((c, idx) => {
-        childrenTotalH += subnodeDims[c.id].h;
-        if (idx < groupChildren.length - 1) childrenTotalH += childGap;
-      });
-      h = Math.max(160, childTop + childrenTotalH + 24);
+
+      // If collapsed, use minimal height; if expanded, calculate based on children
+      if (n.collapsed) {
+        h = Math.max(NODE_H, overlayTop + 20);
+      } else {
+        const childTop = overlayTop + 16;
+        const groupChildren = nodes.filter(c => c.parent === n.id).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+        let childrenTotalH = 0;
+        groupChildren.forEach((c, idx) => {
+          childrenTotalH += subnodeDims[c.id].h;
+          if (idx < groupChildren.length - 1) childrenTotalH += childGap;
+        });
+        h = Math.max(160, childTop + childrenTotalH + 24);
+      }
     } else {
       const titleLines = wrapTextToLines(titleText, innerW, 17, 'bold');
       const descLines = wrapTextToLines(rawDesc, innerW, 15, 'normal');
@@ -338,7 +344,7 @@ function runRoleLayout(nodes, edges) {
 
 // ─── JSON → graph nodes/edges ─────────────────────────────────────────────────
 function parseNodeDetails(nodeDetails, options = {}) {
-  const { collapsed = false } = options;
+  const { collapsedMap = new Map() } = options;
   const nodes = [];
   const edges = [];
   const isOverlayId = (val) => {
@@ -367,6 +373,7 @@ function parseNodeDetails(nodeDetails, options = {}) {
       const role = mod.role || '';
       const lane = getRoleLane(role);
       const importance = parseImportance(mod.importance ?? mod.priority ?? mod.criticality ?? mod.weight);
+      const isCollapsed = collapsedMap.get(modName) ?? true; // Default to collapsed
       nodes.push({
         id: modName,
         label: mod.name || modName,
@@ -378,10 +385,10 @@ function parseNodeDetails(nodeDetails, options = {}) {
         importance,
         functionText: mod.function || '',
         technicalText: mod.technical_methods || '',
-        collapsed: collapsed, // Track collapse state
+        collapsed: isCollapsed,
       });
-      // Only add sub_nodes if not collapsed
-      if (!collapsed) {
+      // Only add sub_nodes if this specific module is not collapsed
+      if (!isCollapsed) {
         mod.sub_nodes.forEach((sn, sIdx) => {
           const snId =
             (sn.id && String(sn.id).trim()) ||
@@ -426,15 +433,17 @@ function parseNodeDetails(nodeDetails, options = {}) {
       if (!src || src === 'null' || src === 'None') src = modName;
       if (!tgt || tgt === 'null' || tgt === 'None') tgt = e.target_mod;
 
-      // If collapsed, only show module-level edges (skip internal_flow edges)
+      // If this module is collapsed, only show module-level edges (skip internal_flow edges)
+      const isCollapsed = collapsedMap.get(modName) ?? true;
       const isInternalEdge = (e.originates_from_internal_node && e.originates_from_internal_node !== modName);
-      if (collapsed && isInternalEdge) return;
+      if (isCollapsed && isInternalEdge) return;
 
       if (src && tgt) edges.push({ id: `out-${modName}-${i}`, source: src, target: tgt, label: e.edge_label || '', dashed: false });
     });
 
-    // Skip internal_flow edges when collapsed
-    if (!collapsed) {
+    // Skip internal_flow edges when this module is collapsed
+    const isCollapsed = collapsedMap.get(modName) ?? true;
+    if (!isCollapsed) {
       mod.ports?.internal_flow?.forEach((e, i) => {
         const src = e.source_node, tgt = e.target_node;
         if (src && tgt && src !== 'null' && src !== 'None' && tgt !== 'null' && tgt !== 'None')
@@ -444,11 +453,36 @@ function parseNodeDetails(nodeDetails, options = {}) {
   });
 
   const validIds = new Set(nodes.map(n => n.id));
-  return { nodes, edges: edges.filter(e => validIds.has(e.source) && validIds.has(e.target)) };
+
+  // Build a map from sub-node ID → parent module ID for all modules (including collapsed ones)
+  // so that edges pointing to/from a collapsed sub-node can be redirected to the parent module.
+  const subNodeToParent = {};
+  Object.entries(normalized).forEach(([modName, mod]) => {
+    mod.sub_nodes?.forEach(sn => {
+      const snId =
+        (sn.id && String(sn.id).trim()) ||
+        (sn.name && String(sn.name).trim());
+      if (snId) subNodeToParent[snId] = modName;
+    });
+  });
+
+  // Resolve an endpoint: if it's not a valid (rendered) node, try to redirect to its parent module
+  const resolve = (id) => {
+    if (validIds.has(id)) return id;
+    const parent = subNodeToParent[id];
+    if (parent && validIds.has(parent)) return parent;
+    return id;
+  };
+
+  const resolvedEdges = edges
+    .map(e => ({ ...e, source: resolve(e.source), target: resolve(e.target) }))
+    .filter(e => validIds.has(e.source) && validIds.has(e.target) && e.source !== e.target);
+
+  return { nodes, edges: resolvedEdges };
 }
 
 // ─── Graph → JSON ─────────────────────────────────────────────────────────────
-function graphToNodeDetails(graph, originalNodeDetails) {
+function graphToNodeDetails(graph, originalNodeDetails, collapsedMap = new Map()) {
   const normalizeText = (text) => String(text || '').replace(/\s+/g, ' ').trim();
   let normalized = {};
   if (Array.isArray(originalNodeDetails)) {
@@ -489,9 +523,12 @@ function graphToNodeDetails(graph, originalNodeDetails) {
     }
     const parent = n.getParent();
     if (parent && parent.isNode()) {
-      childParentMap[n.id] = parent.id;
-      if (!groupChildren[parent.id]) groupChildren[parent.id] = [];
-      groupChildren[parent.id].push(n.id);
+      // Only track real child nodes, not overlay helpers
+      if (!id.endsWith('__hdr') && !id.endsWith('__sub') && !id.endsWith('__ico') && !id.endsWith('__toggle')) {
+        childParentMap[n.id] = parent.id;
+        if (!groupChildren[parent.id]) groupChildren[parent.id] = [];
+        groupChildren[parent.id].push(n.id);
+      }
     }
   });
 
@@ -501,12 +538,15 @@ function graphToNodeDetails(graph, originalNodeDetails) {
 
   allNodes.forEach(node => {
     const nodeId = String(node.id || '');
-    if (nodeId.endsWith('__hdr') || nodeId.endsWith('__sub') || nodeId.endsWith('__ico')) return;
+    if (nodeId.endsWith('__hdr') || nodeId.endsWith('__sub') || nodeId.endsWith('__ico') || nodeId.endsWith('__toggle')) return;
     if (childIds.has(node.id)) return;
     const label = node.attr('label/text') || node.getProp('label') || nodeId;
     const displayName = titleTextMap[nodeId] || normalizeText(label) || nodeId;
     const displayDesc = descTextMap[nodeId] || '';
     const isGroup = groupIds.has(nodeId);
+    // Also treat as group if the original data has sub_nodes (collapsed state: children not in graph)
+    const origForGroup = normalized[nodeId] || normalized[label] || {};
+    const isGroupOrCollapsed = isGroup || (origForGroup.sub_nodes && origForGroup.sub_nodes.length > 0);
     // 优先使用 id 查找，如果没有再用 label
     const orig = normalized[nodeId] || normalized[label] || {};
 
@@ -522,17 +562,15 @@ function graphToNodeDetails(graph, originalNodeDetails) {
       ...(orig.references ? { references: orig.references } : { references: 'None' }),
     };
 
-    if (isGroup) {
-      // If there are children in the graph, use them
+    if (isGroupOrCollapsed) {
+      // If there are children in the graph (expanded), derive sub_nodes from them
       if (groupChildren[nodeId] && groupChildren[nodeId].length > 0) {
         entry.sub_nodes = groupChildren[nodeId].map(childId => {
           const childNode = graph.getCellById(childId);
           let childLabel = childNode?.attr('label/text') || childNode?.getProp('label') || childId;
-          // The text might contain both name and description separated by newline. Only take the first line as name.
           if (childLabel && typeof childLabel === 'string') {
             childLabel = childLabel.split('\n')[0].trim();
           }
-          // 子节点查找逻辑
           const origChild = orig.sub_nodes?.find(sn => sn.id === childId) || orig.sub_nodes?.find(sn => sn.name === childId) || {};
           return {
             id: childId,
@@ -542,9 +580,22 @@ function graphToNodeDetails(graph, originalNodeDetails) {
             technical_methods: origChild.technical_methods || ''
           };
         });
-      } else if (orig.sub_nodes && orig.sub_nodes.length > 0) {
-        // If collapsed (no children in graph), preserve original sub_nodes from the source data
-        entry.sub_nodes = orig.sub_nodes;
+      } else {
+        // Collapsed — always preserve sub_nodes. Try multiple sources in priority order:
+        // 1. orig (from normalized originalNodeDetails)
+        // 2. raw originalNodeDetails lookup (in case normalized lost sub_nodes due to a prior stale emit)
+        let origSubNodes = orig.sub_nodes;
+        if (!origSubNodes || origSubNodes.length === 0) {
+          if (Array.isArray(originalNodeDetails)) {
+            const rawMod = originalNodeDetails.find(m => (m.id || m.name) === nodeId || m.name === nodeId);
+            origSubNodes = rawMod?.sub_nodes;
+          } else if (originalNodeDetails && typeof originalNodeDetails === 'object') {
+            origSubNodes = originalNodeDetails[nodeId]?.sub_nodes;
+          }
+        }
+        if (origSubNodes && origSubNodes.length > 0) {
+          entry.sub_nodes = origSubNodes;
+        }
       }
     }
 
@@ -579,12 +630,16 @@ function graphToNodeDetails(graph, originalNodeDetails) {
 
 // ─── Render nodes+edges into an existing graph instance ──────────────────────
 function renderGraph(graph, nodeDetails, options = {}) {
-  const { collapsed = true } = options; // Default to collapsed view for initial render
+  const { collapsedMap = new Map(), skipZoom = false } = options;
   try {
     const t = Array.isArray(nodeDetails) ? 'array' : typeof nodeDetails;
     const n = Array.isArray(nodeDetails) ? nodeDetails.length : (nodeDetails ? Object.keys(nodeDetails).length : 0);
-    console.debug('[X6] renderGraph input:', t, n, 'collapsed:', collapsed);
+    console.debug('[X6] renderGraph input:', t, n, 'collapsedMap size:', collapsedMap.size);
   } catch (e) { void e; }
+
+  // Suspend view updates to prevent any intermediate repaints / scroll jumps
+  try { graph.startBatch('render'); } catch (e) { void e; }
+
   try { graph.resetCells([]); } catch (e) { void e; }
   try { graph.clearCells(); } catch (e) { void e; }
   try {
@@ -601,7 +656,7 @@ function renderGraph(graph, nodeDetails, options = {}) {
   let parsedNodes = [];
   let parsedEdges = [];
   try {
-    const parsed = parseNodeDetails(nodeDetails, { collapsed });
+    const parsed = parseNodeDetails(nodeDetails, { collapsedMap });
     parsedNodes = parsed.nodes;
     parsedEdges = parsed.edges;
   } catch (err) {
@@ -729,6 +784,23 @@ function renderGraph(graph, nodeDetails, options = {}) {
       },
       ports: { groups: {}, items: [] },
     }) : null;
+
+    // Add collapse/expand indicator
+    const collapseIndicator = graph.addNode({
+      id: `${n.id}__toggle`,
+      shape: 'rect',
+      x: pos.x + pos.w - (iconText ? 68 : 38),
+      y: pos.y + 8,
+      width: 24,
+      height: 22,
+      zIndex: 6,
+      attrs: {
+        body: { fill: 'rgba(255,255,255,0.8)', stroke: theme.stroke, strokeWidth: 1, rx: 4, ry: 4, cursor: 'pointer' },
+        label: { text: isCollapsed ? '▶' : '▼', fontSize: 14, fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5, cursor: 'pointer' },
+      },
+      ports: { groups: {}, items: [] },
+    });
+
     const descNode = graph.addNode({
       id: `${n.id}__sub`,
       shape: 'rect',
@@ -744,44 +816,8 @@ function renderGraph(graph, nodeDetails, options = {}) {
       ports: { groups: {}, items: [] },
     });
 
-    // Add parallel/sequential indicator for expanded groups with sub-nodes
-    if (!isCollapsed && parsedEdges.some(e => e.dashed && (childToParent[e.source] === n.id || childToParent[e.target] === n.id))) {
-      // Has internal_flow edges → sequential pipeline
-      const seqIndicator = graph.addNode({
-        id: `${n.id}__seq`,
-        shape: 'rect',
-        x: pos.x + 8,
-        y: pos.y + overlayTop + 8,
-        width: 50,
-        height: 18,
-        zIndex: 6,
-        attrs: {
-          body: { fill: '#dbeafe', stroke: '#3b82f6', strokeWidth: 1, rx: 4, ry: 4 },
-          label: { text: '→ 串行', fontSize: 10, fontWeight: 600, fill: '#1e40af', textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5, pointerEvents: 'none' },
-        },
-        ports: { groups: {}, items: [] },
-      });
-      group.addChild(seqIndicator);
-    } else if (!isCollapsed) {
-      // No internal_flow edges → parallel components
-      const parIndicator = graph.addNode({
-        id: `${n.id}__par`,
-        shape: 'rect',
-        x: pos.x + 8,
-        y: pos.y + overlayTop + 8,
-        width: 50,
-        height: 18,
-        zIndex: 6,
-        attrs: {
-          body: { fill: '#dcfce7', stroke: '#22c55e', strokeWidth: 1, rx: 4, ry: 4 },
-          label: { text: '∥ 并行', fontSize: 10, fontWeight: 600, fill: '#15803d', textAnchor: 'middle', textVerticalAnchor: 'middle', refX: 0.5, refY: 0.5, pointerEvents: 'none' },
-        },
-        ports: { groups: {}, items: [] },
-      });
-      group.addChild(parIndicator);
-    }
-
     group.addChild(titleNode);
+    group.addChild(collapseIndicator);
     if (iconNode) group.addChild(iconNode);
     group.addChild(descNode);
     group.resize(pos.w, groupHeight);
@@ -1046,11 +1082,16 @@ function renderGraph(graph, nodeDetails, options = {}) {
     });
   });
 
-  setTimeout(() => {
-    try {
-      graph.zoomToFit({ padding: 20, maxScale: 1.8 });
-    } catch (e) { void e; }
-  }, 50);
+  // End suspended batch — triggers a single repaint
+  try { graph.stopBatch('render'); } catch (e) { void e; }
+
+  if (!skipZoom) {
+    setTimeout(() => {
+      try {
+        graph.zoomToFit({ padding: 20, maxScale: 1.8 });
+      } catch (e) { void e; }
+    }, 50);
+  }
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -1069,7 +1110,11 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
   const onPaneClickRef = useRef(onPaneClick);
   const onNodeDetailsChangeRef = useRef(onNodeDetailsChange);
   const pendingRenderRef = useRef(null);  // Queues data that arrived before graph was ready
-  const [isCollapsed, setIsCollapsed] = useState(true); // Track collapse state
+  const [collapsedModules, setCollapsedModules] = useState(new Map()); // Track per-module collapse state
+  const collapsedModulesRef = useRef(collapsedModules); // Ref so closures always see latest value
+  collapsedModulesRef.current = collapsedModules;
+  const setCollapsedModulesRef = useRef(setCollapsedModules); // Ref to allow access inside closures
+  setCollapsedModulesRef.current = setCollapsedModules;
   nodeDetailsRef.current = nodeDetails;
   onNodeClickRef.current = onNodeClick;
   onPaneClickRef.current = onPaneClick;
@@ -1111,7 +1156,7 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
     graph.use(new Export());
     const emitNodeDetailsChange = (g) => {
       if (!g || !onNodeDetailsChangeRef.current || isRenderingRef.current) return;
-      const nextDetails = graphToNodeDetails(g, nodeDetailsRef.current);
+      const nextDetails = graphToNodeDetails(g, nodeDetailsRef.current, collapsedModulesRef.current);
       let sig = '';
       try {
         sig = JSON.stringify(nextDetails);
@@ -1123,12 +1168,13 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
     const syncOverlayLayout = (parentNode) => {
       if (!parentNode || !(parentNode.isNode && parentNode.isNode())) return;
       const id = String(parentNode.id || '');
-      if (!id || id.endsWith('__hdr') || id.endsWith('__sub') || id.endsWith('__ico')) return;
+      if (!id || id.endsWith('__hdr') || id.endsWith('__sub') || id.endsWith('__ico') || id.endsWith('__toggle')) return;
       const data = parentNode.getData ? parentNode.getData() : {};
       if (!data || typeof data.overlayTop !== 'number') return;
       const hdr = graph.getCellById(`${id}__hdr`);
       const sub = graph.getCellById(`${id}__sub`);
       const ico = graph.getCellById(`${id}__ico`);
+      const toggle = graph.getCellById(`${id}__toggle`);
       if (!hdr || !sub) return;
       const pb = parentNode.getBBox();
       const innerW = Math.max(10, pb.width - 24);
@@ -1143,6 +1189,7 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
       hdr.resize(innerW, titleH);
       hdr.attr('label/text', titleLines.join('\n'));
       if (ico) ico.position(pb.x + pb.width - 38, pb.y + 8);
+      if (toggle) toggle.position(pb.x + pb.width - (ico ? 68 : 38), pb.y + 8);
       sub.position(pb.x + 12, pb.y + 10 + titleH + 6);
       sub.resize(innerW, descH || 14);
       sub.attr('label/text', descLines.join('\n'));
@@ -1152,9 +1199,10 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
     };
     graph.on('node:change:position', ({ node }) => {
       const id = String(node?.id || '');
-      if (id.endsWith('__hdr') || id.endsWith('__sub') || id.endsWith('__ico')) return;
+      if (id.endsWith('__hdr') || id.endsWith('__sub') || id.endsWith('__ico') || id.endsWith('__toggle')) return;
       const parent = node.getParent && node.getParent();
       if (parent && parent.isNode && parent.isNode()) {
+        // Child node moved inside group — clamp to boundaries
         const pb = parent.getBBox();
         const data = parent.getData ? parent.getData() : {};
         const overlayTop = (data && data.overlayTop) || 0;
@@ -1171,9 +1219,34 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
         if (ny < minY) ny = minY;
         if (ny > maxY) ny = Math.max(minY, maxY);
         if (nx !== b.x || ny !== b.y) node.position(nx, ny);
+      } else {
+        // Top-level node moved — sync overlay nodes (hdr/sub/ico/toggle) positions
+        syncOverlayLayout(node);
       }
     });
-    graph.on('node:click', ({ node }) => { if (onNodeClickRef.current) onNodeClickRef.current(node.id); });
+    graph.on('node:click', ({ node }) => {
+      const nodeId = String(node.id || '');
+
+      // Check if clicked on toggle indicator
+      if (nodeId.endsWith('__toggle')) {
+        const moduleId = nodeId.slice(0, -8); // Remove '__toggle'
+        const moduleNode = graph.getCellById(moduleId);
+        if (moduleNode) {
+          const data = moduleNode.getData ? moduleNode.getData() : {};
+          const isCurrentlyCollapsed = data.collapsed ?? true;
+
+          // Toggle collapse state for this module via ref (closure-safe)
+          setCollapsedModulesRef.current(prev => {
+            const next = new Map(prev);
+            next.set(moduleId, !isCurrentlyCollapsed);
+            return next;
+          });
+        }
+        return;
+      }
+
+      if (onNodeClickRef.current) onNodeClickRef.current(nodeId);
+    });
     graph.on('blank:click', () => { if (onPaneClickRef.current) onPaneClickRef.current(); });
     graph.on('node:dblclick', ({ node, e }) => {
       e.stopPropagation();
@@ -1259,14 +1332,16 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
       if (!g) return;
       try {
         const id = String(node?.id || '');
-        if (!id.endsWith('__hdr') && !id.endsWith('__sub') && !id.endsWith('__ico')) {
+        if (!id.endsWith('__hdr') && !id.endsWith('__sub') && !id.endsWith('__ico') && !id.endsWith('__toggle')) {
           const hdr = g.getCellById(`${id}__hdr`);
           const sub = g.getCellById(`${id}__sub`);
           const ico = g.getCellById(`${id}__ico`);
+          const toggle = g.getCellById(`${id}__toggle`);
           const toRemove = [];
           if (hdr) toRemove.push(hdr);
           if (sub) toRemove.push(sub);
           if (ico) toRemove.push(ico);
+          if (toggle) toRemove.push(toggle);
           if (toRemove.length) g.removeCells(toRemove);
         }
       } catch (e) { void e; }
@@ -1280,7 +1355,7 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
             const overlayTop = data.overlayTop || 0;
             const children = (p.getChildren?.() || []).filter(c => {
               const cid = String(c.id || '');
-              return c.isNode && c.isNode() && !cid.endsWith('__hdr') && !cid.endsWith('__sub') && !cid.endsWith('__ico');
+              return c.isNode && c.isNode() && !cid.endsWith('__hdr') && !cid.endsWith('__sub') && !cid.endsWith('__ico') && !cid.endsWith('__toggle');
             });
             let needW = 240, needH = overlayTop + 80;
             if (children.length > 0) {
@@ -1347,7 +1422,7 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
     const graph = graphRef.current;
     if (!graph || !onNodeDetailsChangeRef.current) return;
     if (isRenderingRef.current) return;
-    const nextDetails = graphToNodeDetails(graph, nodeDetailsRef.current);
+    const nextDetails = graphToNodeDetails(graph, nodeDetailsRef.current, collapsedModulesRef.current);
     let sig = '';
     try {
       sig = JSON.stringify(nextDetails);
@@ -1381,7 +1456,17 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
       if (hasDetails) {
         isRenderingRef.current = true;
         try {
-          renderGraph(g, detailsToRender, { collapsed: true }); // Start with collapsed view
+          // Initialize collapsedModules with all modules collapsed
+          const initialCollapsed = new Map();
+          const modules = Array.isArray(detailsToRender) ? detailsToRender : Object.values(detailsToRender);
+          modules.forEach(m => {
+            if (m && (m.id || m.name)) {
+              const key = m.id || m.name;
+              initialCollapsed.set(key, true);
+            }
+          });
+          setCollapsedModules(initialCollapsed);
+          renderGraph(g, detailsToRender, { collapsedMap: initialCollapsed });
         } finally {
           isRenderingRef.current = false;
         }
@@ -1413,7 +1498,7 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
     };
   }, [createGraphInstance]);
 
-  // ── Re-render when nodeDetails prop changes ───────────────────────────────
+  // ── Re-render when nodeDetails changes (new data → zoom to fit) ──────────
   useEffect(() => {
     let incomingSig = '';
     try {
@@ -1430,11 +1515,34 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
     }
     isRenderingRef.current = true;
     try {
-      renderGraph(graphRef.current, nodeDetails, { collapsed: isCollapsed });
+      renderGraph(graphRef.current, nodeDetails, { collapsedMap: collapsedModules, skipZoom: false });
     } finally {
       isRenderingRef.current = false;
     }
-  }, [nodeDetails, createGraphInstance, isCollapsed]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodeDetails, createGraphInstance]);
+
+  // ── Re-render when collapsedModules changes (user toggle → skip zoom) ────
+  useEffect(() => {
+    if (!graphReadyRef.current || !graphRef.current) return;
+    if (collapsedModules.size === 0) return; // skip initial empty map
+
+    const g = graphRef.current;
+
+    // Store current viewport matrix before re-render (captures both scale and translate)
+    const savedMatrix = g.transform.getMatrix();
+
+    isRenderingRef.current = true;
+    try {
+      renderGraph(g, nodeDetailsRef.current, { collapsedMap: collapsedModules, skipZoom: true });
+    } finally {
+      isRenderingRef.current = false;
+    }
+
+    // Restore viewport by setting the exact matrix back — avoids any scale/translate side-effects
+    g.transform.setMatrix(savedMatrix);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collapsedModules]);
 
   // ── Keyboard: delete/backspace remove selected ────────────────────────────
   useEffect(() => {
@@ -1654,10 +1762,6 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
     syncToJson();
   }, [syncToJson]);
 
-  const handleToggleCollapse = useCallback(() => {
-    setIsCollapsed(prev => !prev);
-  }, []);
-
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} tabIndex={0} />
@@ -1665,18 +1769,11 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
         <button title="放大" onClick={() => graphRef.current?.zoom(0.1)} style={btnStyle}>+</button>
         <button title="缩小" onClick={() => graphRef.current?.zoom(-0.1)} style={btnStyle}>−</button>
         <button title="适应画布" onClick={() => graphRef.current?.zoomToFit({ padding: 40, maxScale: 1.2 })} style={btnStyle}>⊡</button>
-        <button
-          title={isCollapsed ? "展开子节点" : "折叠子节点"}
-          onClick={handleToggleCollapse}
-          style={{ ...btnStyle, backgroundColor: isCollapsed ? '#f59e0b' : '#10b981', color: '#fff', borderColor: isCollapsed ? '#f59e0b' : '#10b981' }}
-        >
-          {isCollapsed ? '📦 展开' : '📋 折叠'}
-        </button>
         <button title="添加节点" onClick={handleAddNode} style={{ ...btnStyle, backgroundColor: '#217cf3', color: '#fff', borderColor: '#217cf3' }}>+ 模块</button>
         <button title="添加子节点" onClick={handleAddSubNode} style={{ ...btnStyle, backgroundColor: '#217cf3', color: '#fff', borderColor: '#217cf3' }}>+ 子节点</button>
       </div>
       <div style={{ position: 'absolute', bottom: 8, left: 8, fontSize: 11, color: '#aaa', zIndex: 10, pointerEvents: 'none' }}>
-        双击节点重命名 · 双击连线编辑标签 · 拖拽端口连线 · Delete 删除选中
+        双击节点重命名 · 双击连线编辑标签 · 拖拽端口连线 · Delete 删除选中 · 点击 ▶/▼ 展开/折叠模块
       </div>
     </div>
   );

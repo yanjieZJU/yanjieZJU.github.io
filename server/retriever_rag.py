@@ -575,25 +575,20 @@ def rag_retrieve(query: str, top_k: int = FINAL_TOP_K) -> list[dict]:
     matrix, ids = get_rag_store()
     embed_model = get_embed_model()
 
-    # 1. Query expansion
-    queries = _expand_query(query)
-    print(f"[SEARCH] RAG: {len(queries)} queries (original + {len(queries)-1} rewrites)")
+    # 1. Use original query only (skip expansion to avoid latency in chat context)
+    queries = [query]
+    print(f"[SEARCH] RAG: 1 query")
 
     all_dense_lists: list[list[tuple[str, float]]] = []
     all_bm25_lists: list[list[tuple[str, float]]] = []
 
     for q in queries:
-        # Dense retrieval
+        # Dense retrieval — call directly (no nested ThreadPoolExecutor which deadlocks in asyncio)
         q_emb = None
         for attempt in range(3):
             try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                    future = ex.submit(embed_model.get_query_embedding, q)
-                    q_emb = future.result(timeout=15)
+                q_emb = embed_model.get_query_embedding(q)
                 break
-            except concurrent.futures.TimeoutError:
-                print(f"  [WARN] Query embed timeout (attempt {attempt+1}), retrying...")
-                time.sleep(2)
             except Exception as e:
                 print(f"  [WARN] Embed error (attempt {attempt+1}): {e}")
                 time.sleep(2 ** attempt)
@@ -601,15 +596,13 @@ def rag_retrieve(query: str, top_k: int = FINAL_TOP_K) -> list[dict]:
             dense_ranked = _numpy_dense_search(q_emb, matrix, ids, top_k=DENSE_TOP_K)
             all_dense_lists.append(dense_ranked)
 
-        # BM25 retrieval
-        bm25_ranked = _bm25_retrieve(q, top_k=BM25_TOP_K)
-        all_bm25_lists.append(bm25_ranked)
+        # BM25 retrieval skipped — too slow for 26k chunks in synchronous context
 
-    if not all_dense_lists and not all_bm25_lists:
+    if not all_dense_lists:
         return []
 
-    # 2. RRF fusion across dense + BM25
-    fused = _rrf_fuse(all_dense_lists + all_bm25_lists)
+    # 2. Use dense results directly (no BM25 to fuse)
+    fused = _rrf_fuse(all_dense_lists)
 
     # 3. Take top RERANK_CUTOFF, fetch from SQLite, return top_k
     top_candidates = fused[:RERANK_CUTOFF]

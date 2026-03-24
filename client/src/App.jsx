@@ -822,19 +822,39 @@ function App() {
   }, [selectedNodeInfo]);
 
   const handleNodeDetailsChange = useCallback((newDetails) => {
+    // Merge: preserve sub_nodes from current nodeDetails if newDetails lost them (e.g. collapsed state)
+    let merged = newDetails;
+    try {
+      const current = detailsRef.current;
+      if (current && newDetails) {
+        const isArr = Array.isArray(newDetails);
+        const entries = isArr ? newDetails.map(m => [m.id || m.name, m]) : Object.entries(newDetails);
+        const currentEntries = Array.isArray(current) ? current.map(m => [m.id || m.name, m]) : Object.entries(current);
+        const currentMap = Object.fromEntries(currentEntries);
+        const mergedEntries = entries.map(([key, mod]) => {
+          const curMod = currentMap[key];
+          if (curMod && curMod.sub_nodes && curMod.sub_nodes.length > 0 && (!mod.sub_nodes || mod.sub_nodes.length === 0)) {
+            return [key, { ...mod, sub_nodes: curMod.sub_nodes }];
+          }
+          return [key, mod];
+        });
+        merged = isArr ? mergedEntries.map(([, m]) => m) : Object.fromEntries(mergedEntries);
+      }
+    } catch (e) { void e; }
+
     let sig = '';
     try {
-      sig = JSON.stringify(newDetails);
+      sig = JSON.stringify(merged);
     } catch (e) { void e; }
     if (sig && sig === nodeDetailsSigRef.current) return;
     nodeDetailsSigRef.current = sig;
-    setNodeDetails(newDetails);
+    setNodeDetails(merged);
     setPlans(prevPlans => {
       const updated = [...prevPlans];
       if (updated[activePlanIndex]) {
         updated[activePlanIndex] = {
           ...updated[activePlanIndex],
-          node_details: newDetails
+          node_details: merged
         };
       }
       return updated;
@@ -1402,7 +1422,7 @@ function App() {
                       fontSize: '13px',
                     }}
                   >
-                    {`查看更多视角（+${otherPlans.length}）`}
+                    {`查看其他领域类比（+${otherPlans.length}）`}
                   </div>
                 )}
                 </div>
@@ -1538,9 +1558,9 @@ function App() {
               )}
             </div>
 
-            <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+            <div style={{ display: 'flex', flex: 1, overflow: 'hidden', flexDirection: 'column' }}>
               {/* 渲染图部分 */}
-              <div className="mermaid-wrapper" style={{ flex: 3, overflow: 'hidden', borderRight: '1px solid #eee', position: 'relative', display: 'flex', flexDirection: 'column' }}>
+              <div className="mermaid-wrapper" style={{ flex: 1, overflow: 'hidden', borderBottom: '1px solid #eee', position: 'relative', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
                 <div style={{ flex: 1, minHeight: 0, width: '100%' }}>
                   <X6FlowViewer
                     ref={resultFlowRef}
@@ -1560,193 +1580,157 @@ function App() {
                 )}
               </div>
 
-              {/* 节点详情部分 */}
-              <div style={{ flex: 1, padding: '20px', overflowY: 'auto', backgroundColor: '#fafafa' }}>
-                <div className="card-title" style={{ fontSize: '1rem', borderBottom: '1px solid #ddd', paddingBottom: '10px', marginBottom: '15px' }}>
-                  总体描述
-                </div>
-                {plans.length > 0 && plans[activePlanIndex] && plans[activePlanIndex].description && (
-                  <div style={{ fontSize: '0.9rem', color: '#555', marginBottom: '20px', whiteSpace: 'pre-wrap' }}>
-                    {plans[activePlanIndex].description}
-                  </div>
-                )}
-
-                <div className="card-title" style={{ fontSize: '1rem', borderBottom: '1px solid #ddd', paddingBottom: '10px', marginBottom: '15px' }}>
-                  节点详情
-                </div>
-                <div style={{ fontSize: '0.9rem', color: '#444' }}>
-                  {selectedNodeInfo ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      <div style={{ backgroundColor: '#fff', padding: '10px', borderRadius: '4px', border: '1px solid #eee' }}>
-                        <strong style={{ color: '#333' }}>名称:</strong>
-                        <div style={{ marginTop: '5px' }}>
-                          {selectedNodeInfo.name}
-                          {selectedNodeInfo.isSubNode && (
-                            <span style={{ fontSize: '0.85rem', color: '#666', marginLeft: '8px' }}>(所属模块: {selectedNodeInfo.parentModule})</span>
-                          )}
-                        </div>
+              {/* 节点详情部分 — 下方滚动面板 */}
+              <div style={{ flexShrink: 0, maxHeight: '280px', overflowY: 'auto', backgroundColor: '#fafafa', borderTop: '1px solid #e0e0e0', padding: '12px 20px' }}>
+                {!selectedNodeInfo ? (
+                  /* 收起时：显示总体描述 */
+                  plans.length > 0 && plans[activePlanIndex] && plans[activePlanIndex].description ? (
+                    <div style={{ fontSize: '0.85rem', color: '#555', lineHeight: 1.6 }}>
+                      <strong style={{ color: '#333', display: 'block', marginBottom: '5px', fontSize: '0.88rem' }}>总体描述</strong>
+                      <div style={{ whiteSpace: 'pre-wrap' }}>{plans[activePlanIndex].description}</div>
+                    </div>
+                  ) : (
+                    <div style={{ color: '#bbb', fontSize: '0.85rem' }}>点击图表节点查看详情</div>
+                  )
+                ) : (
+                  /* 选中节点时：三栏 + 来源通栏 */
+                  <div>
+                    {/* 节点标题行 */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                      <div>
+                        <strong style={{ color: '#222', fontSize: '0.95rem' }}>{selectedNodeInfo.name}</strong>
+                        {selectedNodeInfo.isSubNode && (
+                          <span style={{ fontSize: '0.78rem', color: '#888', marginLeft: '8px' }}>所属: {selectedNodeInfo.parentModule}</span>
+                        )}
                       </div>
-                      <div style={{ backgroundColor: '#fff', padding: '10px', borderRadius: '4px', border: '1px solid #eee' }}>
-                        <strong style={{ color: '#333' }}>功能:</strong>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        {!isNodeDetailEditing ? (
+                          <button
+                            onClick={() => setIsNodeDetailEditing(true)}
+                            disabled={loading}
+                            style={{ padding: '3px 10px', background: '#fff', border: '1px solid #d0d7de', color: '#555', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}
+                          >
+                            编辑
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              onClick={handleSaveNodeDetailDraft}
+                              disabled={loading}
+                              style={{ padding: '3px 10px', background: '#217cf3', border: '1px solid #217cf3', color: '#fff', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}
+                            >
+                              保存
+                            </button>
+                            <button
+                              onClick={() => { setNodeDetailDraft({ function: selectedNodeInfo.function || '', technical_methods: selectedNodeInfo.technical_methods || '' }); setIsNodeDetailEditing(false); }}
+                              disabled={loading}
+                              style={{ padding: '3px 10px', background: '#fff', border: '1px solid #d0d7de', color: '#666', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}
+                            >
+                              取消
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    {/* 三栏：功能 | 技术方法 | 输入/输出 */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '10px' }}>
+                      <div style={{ background: '#fff', border: '1px solid #eee', borderRadius: '6px', padding: '8px 10px' }}>
+                        <strong style={{ color: '#444', fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>功能</strong>
                         {isNodeDetailEditing ? (
                           <textarea
                             className="styled-input"
-                            rows={6}
+                            rows={3}
                             value={nodeDetailDraft.function}
                             onChange={(e) => setNodeDetailDraft((prev) => ({ ...prev, function: e.target.value }))}
-                            style={{ marginTop: '8px', marginBottom: 0, resize: 'vertical', fontSize: '0.88rem', lineHeight: 1.5, minHeight: '110px' }}
+                            style={{ marginTop: 0, marginBottom: 0, resize: 'vertical', fontSize: '0.82rem', lineHeight: 1.4 }}
                           />
                         ) : (
-                          <div style={{ marginTop: '8px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6, color: '#333', maxHeight: 'none' }}>
+                          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5, color: '#333', fontSize: '0.82rem' }}>
                             {nodeDetailDraft.function || '暂无'}
                           </div>
                         )}
                       </div>
-                      <div style={{ backgroundColor: '#fff', padding: '10px', borderRadius: '4px', border: '1px solid #eee' }}>
-                        <strong style={{ color: '#333' }}>技术方法:</strong>
+                      <div style={{ background: '#fff', border: '1px solid #eee', borderRadius: '6px', padding: '8px 10px' }}>
+                        <strong style={{ color: '#444', fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>技术方法</strong>
                         {isNodeDetailEditing ? (
                           <textarea
                             className="styled-input"
-                            rows={6}
+                            rows={3}
                             value={nodeDetailDraft.technical_methods}
                             onChange={(e) => setNodeDetailDraft((prev) => ({ ...prev, technical_methods: e.target.value }))}
-                            style={{ marginTop: '8px', marginBottom: 0, resize: 'vertical', fontSize: '0.88rem', lineHeight: 1.5, minHeight: '110px' }}
+                            style={{ marginTop: 0, marginBottom: 0, resize: 'vertical', fontSize: '0.82rem', lineHeight: 1.4 }}
                           />
                         ) : (
-                          <div style={{ marginTop: '8px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.6, color: '#333', maxHeight: 'none' }}>
+                          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5, color: '#333', fontSize: '0.82rem' }}>
                             {nodeDetailDraft.technical_methods || '暂无'}
                           </div>
                         )}
                       </div>
-                      {!isNodeDetailEditing ? (
-                        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                          <button
-                            onClick={() => setIsNodeDetailEditing(true)}
-                            disabled={loading}
-                            style={{ padding: '4px 10px', background: '#fff', border: '1px solid #d0d7de', color: '#555', borderRadius: '4px', cursor: 'pointer', fontSize: '0.82rem' }}
-                          >
-                            编辑详情
-                          </button>
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                          <button
-                            onClick={() => {
-                              setNodeDetailDraft({
-                                function: selectedNodeInfo.function || '',
-                                technical_methods: selectedNodeInfo.technical_methods || ''
-                              });
-                              setIsNodeDetailEditing(false);
-                            }}
-                            disabled={loading}
-                            style={{ padding: '4px 10px', background: '#fff', border: '1px solid #d0d7de', color: '#666', borderRadius: '4px', cursor: 'pointer', fontSize: '0.82rem' }}
-                          >
-                            取消
-                          </button>
-                          <button
-                            onClick={handleSaveNodeDetailDraft}
-                            disabled={loading}
-                            style={{ padding: '4px 10px', background: '#217cf3', border: '1px solid #217cf3', color: '#fff', borderRadius: '4px', cursor: 'pointer', fontSize: '0.82rem' }}
-                          >
-                            保存
-                          </button>
-                        </div>
-                      )}
-                      {selectedNodeInfo.ports && (
-                        <div style={{ backgroundColor: '#fff', padding: '10px', borderRadius: '4px', border: '1px solid #eee' }}>
-                          <p><strong style={{ color: '#333' }}>输入:</strong></p>
-                          <ul style={{ paddingLeft: '20px', margin: '5px 0', color: '#666' }}>
-                            {selectedNodeInfo.ports.incoming?.map((p, i) => (
-                              <li key={i}>{p.edge_label} (from {p.source_mod || 'Unknown'})</li>
-                            ))}
-                            {(!selectedNodeInfo.ports.incoming || selectedNodeInfo.ports.incoming.length === 0) && <li>无</li>}
-                          </ul>
-                          <p style={{ marginTop: '10px' }}><strong style={{ color: '#333' }}>输出:</strong></p>
-                          <ul style={{ paddingLeft: '20px', margin: '5px 0', color: '#666' }}>
-                            {selectedNodeInfo.ports.outgoing?.map((p, i) => (
-                              <li key={i}>{p.edge_label} (to {p.target_mod || 'Unknown'})</li>
-                            ))}
-                            {(!selectedNodeInfo.ports.outgoing || selectedNodeInfo.ports.outgoing.length === 0) && <li>无</li>}
-                          </ul>
-                        </div>
-                      )}
-                      {/* 展示参考来源 */}
-                      {(() => {
-                        // 1. Backend injected directly:
-                        if (selectedNodeInfo.reference) {
-                          return (
-                            <div style={{ backgroundColor: '#fff', padding: '10px', borderRadius: '4px', border: '1px solid #eee' }}>
-                              <strong style={{ color: '#333' }}>来源:</strong>
-                              <div style={{ marginTop: '5px' }}>
-                                <div><strong>{selectedNodeInfo.reference.name}</strong></div>
-                                {selectedNodeInfo.reference.source && (
-                                  <div style={{ fontSize: '0.85rem', color: '#217cf3', marginTop: '5px' }}><strong>Source File: </strong>{selectedNodeInfo.reference.source}</div>
-                                )}
-                                <div style={{ fontSize: '0.85rem', color: '#666', marginTop: '5px', whiteSpace: 'pre-wrap' }}>{selectedNodeInfo.reference.technical_details}</div>
-                              </div>
-                            </div>
-                          );
-                        }
-
-                        // 2. Fallback to plan_data.used_references
-                        if (plans.length > 0 && plans[activePlanIndex] && plans[activePlanIndex].used_references) {
-                          const modName = selectedNodeInfo.isSubNode ? selectedNodeInfo.parentModule : selectedNodeInfo.name;
-                          const usedRefs = plans[activePlanIndex].used_references[modName];
-                          if (usedRefs && usedRefs.length > 0) {
+                      <div style={{ background: '#fff', border: '1px solid #eee', borderRadius: '6px', padding: '8px 10px' }}>
+                        <strong style={{ color: '#444', fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>输入/输出</strong>
+                        <div style={{ fontSize: '0.82rem', color: '#333', lineHeight: 1.5 }}>
+                          {(() => {
+                            const ports = selectedNodeInfo.ports;
+                            if (!ports) return <span style={{ color: '#bbb' }}>暂无</span>;
+                            const incoming = ports.incoming || [];
+                            const outgoing = ports.outgoing || [];
+                            if (incoming.length === 0 && outgoing.length === 0) return <span style={{ color: '#bbb' }}>暂无</span>;
                             return (
-                              <div style={{ backgroundColor: '#fff', padding: '10px', borderRadius: '4px', border: '1px solid #eee' }}>
-                                <strong style={{ color: '#333' }}>来源:</strong>
-                                <div style={{ marginTop: '5px' }}>
-                                  {usedRefs.map((r, idx) => (
-                                    <div key={idx} style={{ marginBottom: '10px' }}>
-                                      <div><strong>{r.name}</strong></div>
-                                      {r.source && (
-                                        <div style={{ fontSize: '0.85rem', color: '#217cf3', marginTop: '5px' }}><strong>Souce File: </strong>{r.source}</div>
-                                      )}
-                                      <div style={{ fontSize: '0.85rem', color: '#666', marginTop: '5px', whiteSpace: 'pre-wrap' }}>{r.text}</div>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
+                              <>
+                                {incoming.length > 0 && (
+                                  <div><span style={{ color: '#3b82f6' }}>输入: </span>{incoming.map((p, i) => <span key={i}>{p.edge_label || p.source_node || JSON.stringify(p)}{i < incoming.length - 1 ? '、' : ''}</span>)}</div>
+                                )}
+                                {outgoing.length > 0 && (
+                                  <div><span style={{ color: '#22c55e' }}>输出: </span>{outgoing.map((p, i) => <span key={i}>{p.edge_label || p.target_mod || p.target_node || JSON.stringify(p)}{i < outgoing.length - 1 ? '、' : ''}</span>)}</div>
+                                )}
+                              </>
                             );
-                          }
-                        }
-
-                        // 3. Fallback to raw value from json
-                        const rawRefs = selectedNodeInfo.references;
-                        if (rawRefs && String(rawRefs).toLowerCase() !== 'none' && String(rawRefs).toLowerCase() !== 'null') {
-                          const normalizedRawText = typeof rawRefs === 'string'
-                            ? rawRefs
-                            : JSON.stringify(rawRefs, null, 2);
-                          return (
-                            <div style={{ backgroundColor: '#fff', padding: '10px', borderRadius: '4px', border: '1px solid #eee' }}>
-                              <strong style={{ color: '#333' }}>来源:</strong>
-                              <div style={{ marginTop: '5px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{normalizedRawText}</div>
+                          })()}
+                        </div>
+                      </div>
+                    </div>
+                    {/* 来源通栏 */}
+                    {(() => {
+                      // First try used_references from the plan (full doc entries)
+                      const usedRefs = plans[activePlanIndex]?.used_references;
+                      const nodeName = selectedNodeInfo.name;
+                      const fullEntries = usedRefs && nodeName && usedRefs[nodeName];
+                      // Fall back to the module-level references string
+                      const refStr = selectedNodeInfo.references || selectedNodeInfo.reference;
+                      const hasAny = (fullEntries && fullEntries.length > 0) || (refStr && refStr !== 'None' && refStr !== '');
+                      if (!hasAny) return null;
+                      return (
+                        <div style={{ background: '#f7f9fc', border: '1px solid #e8edf5', borderRadius: '6px', padding: '8px 10px' }}>
+                          <strong style={{ color: '#444', fontSize: '0.8rem', display: 'block', marginBottom: '6px' }}>来源</strong>
+                          {fullEntries && fullEntries.length > 0 ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              {fullEntries.map((entry, i) => (
+                                <div key={i} style={{ borderLeft: '3px solid #c5d8fb', paddingLeft: '8px' }}>
+                                  <div style={{ fontWeight: 600, fontSize: '0.8rem', color: '#2a3550', marginBottom: '2px' }}>
+                                    [{i + 1}] {entry.name || '未知来源'}
+                                    {entry.source && <span style={{ fontWeight: 400, color: '#7a8a9e', marginLeft: '6px', fontSize: '0.75rem' }}>{entry.source}</span>}
+                                  </div>
+                                  {entry.text && (
+                                    <div style={{ fontSize: '0.78rem', color: '#444', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                      {entry.text}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
                             </div>
-                          );
-                        }
-
-                        // 4. No references found
-                        return (
-                          <div style={{ backgroundColor: '#fff', padding: '10px', borderRadius: '4px', border: '1px solid #eee' }}>
-                            <strong style={{ color: '#333' }}>来源:</strong>
-                            <div style={{ marginTop: '5px' }}>无相关源论文</div>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  ) : (
-                    <div style={{ textAlign: 'center', color: '#999', padding: '20px' }}>
-                      点击左侧图表节点查看详情
-                    </div>
-                  )}
-                </div>
+                          ) : (
+                            <div style={{ fontSize: '0.8rem', color: '#555', lineHeight: 1.6 }}>
+                              {refStr}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
               </div>
             </div>
-
-
           </div>
-
         </div>
       </main>
 

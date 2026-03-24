@@ -399,15 +399,16 @@ _RAG_TOOL = {
         "name": "search_papers",
         "description": (
             "Search the academic paper knowledge base for relevant information. "
-            "Use this when the user asks about research topics, system design, "
-            "methodologies, or any question that may benefit from literature references."
+            "Use this tool before answering questions about: system design, "
+            "HCI methods, task scheduling, anomaly detection, robot systems, "
+            "interaction techniques, or any technical/research topic. "
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "The search query to look up in the paper knowledge base.",
+                    "description": "The search query to look up in the paper knowledge base. Use specific technical terms.",
                 }
             },
             "required": ["query"],
@@ -454,6 +455,7 @@ async def chat_text(req: ChatRequest):
 
     def stream():
         assistant_content = ""
+        rag_sources = None  # will hold source info if RAG was used
         try:
             # Signal that we're thinking (before first LLM call)
             yield json.dumps({"type": "thinking"}) + "\n"
@@ -470,25 +472,21 @@ async def chat_text(req: ChatRequest):
 
             # ── Step 2: if LLM wants to call the tool, execute it ────────────
             if choice.finish_reason == "tool_calls" and choice.message.tool_calls:
-                tool_call = choice.message.tool_calls[0]
-                try:
-                    args = json.loads(tool_call.function.arguments)
-                    query = args.get("query", "")
-                except Exception:
-                    query = ""
+                all_queries = []
+                all_chunks = []
 
-                yield json.dumps({"type": "tool_call", "query": query}) + "\n"
+                for tool_call in choice.message.tool_calls:
+                    try:
+                        args = json.loads(tool_call.function.arguments)
+                        query = args.get("query", "")
+                    except Exception:
+                        query = ""
+                    all_queries.append((tool_call, query))
 
-                if query:
-                    if not RAG_READY:
-                        tool_result = "RAG knowledge base is not ready yet. Please warm it up first."
-                    else:
-                        chunks = rag_retrieve(query)
-                        tool_result = _format_rag_results(chunks)
-                else:
-                    tool_result = "Empty query."
-                # Append assistant tool-call message + tool result to history
-                # Must convert SDK object to plain dict for the next API call
+                # Report first query to frontend
+                first_query = all_queries[0][1] if all_queries else ""
+                yield json.dumps({"type": "tool_call", "query": first_query}) + "\n"
+
                 assistant_msg = {
                     "role": "assistant",
                     "content": choice.message.content or "",
@@ -504,14 +502,35 @@ async def chat_text(req: ChatRequest):
                         for tc in choice.message.tool_calls
                     ],
                 }
-                msgs_with_tool = msgs + [
-                    assistant_msg,
-                    {
+
+                tool_result_msgs = []
+                for tool_call, query in all_queries:
+                    if query:
+                        if not RAG_READY:
+                            tool_result = "RAG knowledge base is not ready yet. Please warm it up first."
+                        else:
+                            chunks = rag_retrieve(query)
+                            all_chunks.extend(chunks)
+                            tool_result = _format_rag_results(chunks)
+                    else:
+                        tool_result = "Empty query."
+                    tool_result_msgs.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "content": tool_result,
-                    },
-                ]
+                    })
+
+                if all_chunks:
+                    rag_sources = {
+                        "query": ", ".join(q for _, q in all_queries if q),
+                        "count": len(all_chunks),
+                        "ready": True,
+                        "titles": [c.get("source", "unknown") for c in all_chunks[:5]],
+                    }
+                elif all_queries and not RAG_READY:
+                    rag_sources = {"query": first_query, "count": 0, "ready": False}
+
+                msgs_with_tool = msgs + [assistant_msg] + tool_result_msgs
 
                 # ── Step 3: stream final answer with retrieved context ───────
                 final_resp = client.chat.completions.create(
@@ -534,7 +553,7 @@ async def chat_text(req: ChatRequest):
                 if content:
                     yield json.dumps({"type": "delta", "content": content}) + "\n"
 
-            yield json.dumps({"type": "done"}) + "\n"
+            yield json.dumps({"type": "done", "rag_sources": rag_sources}) + "\n"
 
             # Save to server if requested
             if req.save_history and req.session_id:
