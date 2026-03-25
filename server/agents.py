@@ -201,16 +201,39 @@ class PlannerAgent:
         num_outputs = min(max(1, num_outputs), 3)
 
         selected_references = []
-        
-        # A. Near Field (Top 1)
+
+        def _find_neighbor_cluster_ids(primary_id, candidate_pool, exclude_ids, max_neighbors=2, sim_threshold=0.6):
+            """
+            Among candidate_pool (list of (cluster_id, query_score)), return up to max_neighbors
+            cluster IDs whose embedding similarity to primary_id is >= sim_threshold,
+            excluding any IDs in exclude_ids. Candidates are already query-filtered (0.3-0.6),
+            so neighbors are both domain-adjacent AND query-relevant.
+            """
+            if primary_id not in self.cluster_embeddings:
+                return []
+            primary_emb = np.array(self.cluster_embeddings[primary_id]).reshape(1, -1)
+            neighbors = []
+            for other_id, _ in candidate_pool:
+                if other_id == primary_id or other_id in exclude_ids:
+                    continue
+                if other_id not in self.cluster_embeddings:
+                    continue
+                sim = cosine_similarity(primary_emb, np.array(self.cluster_embeddings[other_id]).reshape(1, -1))[0][0]
+                if sim >= sim_threshold:
+                    neighbors.append((other_id, sim))
+            neighbors.sort(key=lambda x: x[1], reverse=True)
+            return [n[0] for n in neighbors[:max_neighbors]]
+
+        # A. Near Field (Top 1) — logic unchanged
         if scored_clusters:
             near_cluster_id = scored_clusters[0][0]
             near_score = scored_clusters[0][1]
-            
+
             if near_score < 0.5:
                 selected_references.append({
                     "type": "NEAR_FIELD_MISSING",
                     "cluster_id": None,
+                    "cluster_ids": [],
                     "score": near_score,
                     "name": "No Relevant Papers Found"
                 })
@@ -219,42 +242,61 @@ class PlannerAgent:
                 selected_references.append({
                     "type": "NEAR_FIELD",
                     "cluster_id": near_cluster_id,
+                    "cluster_ids": [near_cluster_id],
                     "score": near_score,
                     "name": self.topology_knowledge["scene_clusters"][near_cluster_id]["name"]
                 })
                 print(f"🎯 Near-Field Context: {self.topology_knowledge['scene_clusters'][near_cluster_id]['name'][:50]}... (Score: {near_score:.2f})")
 
         # B. Far Field (Random Sampling)
+        # Each far-field perspective samples an anchor cluster, then expands with 1-2 same-domain
+        # neighbors so the LLM receives a coherent cluster of related techniques.
         near_id_set = {scored_clusters[0][0]} if scored_clusters else set()
         far_candidates = [c for c in scored_clusters if 0.3 <= c[1] <= 0.6 and c[0] not in near_id_set]
-        
+
         needed_far = max(0, num_outputs - 1)
         if far_candidates and needed_far > 0:
             import random
-            # Sample without replacement if possible
             k = min(len(far_candidates), needed_far)
             chosen_far = random.sample(far_candidates, k)
-            
+            used_far_ids = set()
+
             for c_id, c_score in chosen_far:
+                used_far_ids.add(c_id)
+                neighbor_ids = _find_neighbor_cluster_ids(
+                    c_id,
+                    candidate_pool=far_candidates,
+                    exclude_ids=near_id_set | used_far_ids,
+                    max_neighbors=2,
+                    sim_threshold=0.6
+                )
+                used_far_ids.update(neighbor_ids)
+                all_cluster_ids = [c_id] + neighbor_ids
                 selected_references.append({
                     "type": "FAR_FIELD",
                     "cluster_id": c_id,
+                    "cluster_ids": all_cluster_ids,
                     "score": c_score,
                     "name": self.topology_knowledge["scene_clusters"][c_id]["name"]
                 })
-                print(f"🚀 Far-Field Context: {self.topology_knowledge['scene_clusters'][c_id]['name'][:50]}... (Score: {c_score:.2f})")
-        
+                print(f"🚀 Far-Field Context: {self.topology_knowledge['scene_clusters'][c_id]['name'][:50]}... "
+                      f"(Score: {c_score:.2f}, +{len(neighbor_ids)} neighbors: {neighbor_ids})")
+
         # Fill remaining with random near/mid if we ran out of far candidates
         while len(selected_references) < num_outputs:
-             # Just pick next best near ones or randoms
-             # for simplicity, just pick from top list excluding already picked
-             existing_ids = set(r["cluster_id"] for r in selected_references if r["cluster_id"] is not None)
-             residue = [c for c in scored_clusters if c[0] not in existing_ids]
-             if not residue: break
-             c_id, c_score = residue[0]
-             selected_references.append({
+            existing_ids = {
+                c_id for r in selected_references
+                for c_id in r.get("cluster_ids", [])
+                if c_id is not None
+            }
+            residue = [c for c in scored_clusters if c[0] not in existing_ids]
+            if not residue:
+                break
+            c_id, c_score = residue[0]
+            selected_references.append({
                 "type": "SUPPLEMENTAL",
                 "cluster_id": c_id,
+                "cluster_ids": [c_id],
                 "score": c_score,
                 "name": self.topology_knowledge["scene_clusters"][c_id]["name"]
             })
@@ -266,21 +308,35 @@ class PlannerAgent:
 
         # Pre-fetch community summaries for all selected references in parallel
         def _fetch_summaries_for_ref(ref):
-            if ref["type"] == "NEAR_FIELD_MISSING" or ref["cluster_id"] is None:
-                return ref["cluster_id"], [], []
-            c_id = ref["cluster_id"]
-            cluster_data = self.topology_knowledge["scene_clusters"][c_id]
-            comm_dist = cluster_data.get("community_distribution", {})
-            sorted_comms = sorted(comm_dist.items(), key=lambda x: x[1], reverse=True)
-            if not sorted_comms:
-                return c_id, [], []
+            if ref["type"] == "NEAR_FIELD_MISSING":
+                return ref.get("cluster_id"), [], []
+            cluster_ids = ref.get("cluster_ids", [ref.get("cluster_id")])
+            cluster_ids = [c for c in cluster_ids if c is not None]
+            if not cluster_ids:
+                return None, [], []
 
-            # Top-3 dominant communities
+            primary_id = cluster_ids[0]
+
+            # Merge community_distribution across all clusters in this reference pack.
+            # Weight each cluster's distribution equally so dominant communities from any
+            # cluster surface; use a dict to accumulate scores.
+            merged_comm_scores: dict = {}
+            for c_id in cluster_ids:
+                cdata = self.topology_knowledge["scene_clusters"].get(c_id, {})
+                for comm, score in cdata.get("community_distribution", {}).items():
+                    merged_comm_scores[comm] = merged_comm_scores.get(comm, 0) + score
+
+            if not merged_comm_scores:
+                return primary_id, [], []
+
+            sorted_comms = sorted(merged_comm_scores.items(), key=lambda x: x[1], reverse=True)
+
+            # Top-3 dominant communities (across all merged clusters)
             top_comm_ids = [c[0] for c in sorted_comms[:3]]
 
-            # 2 random tail communities (rank 6–20, low-weight but domain-specific)
-            tail_candidates = [c[0] for c in sorted_comms[5:20]]
+            # 2 random tail communities (rank 6–20 of merged ranking)
             import random
+            tail_candidates = [c[0] for c in sorted_comms[5:20]]
             tail_comm_ids = random.sample(tail_candidates, min(2, len(tail_candidates)))
 
             relevant_comm_ids = top_comm_ids + tail_comm_ids
@@ -302,12 +358,12 @@ class PlannerAgent:
                 for r in records:
                     tag = " *(long-tail — distinctive niche)*" if r['id'] in tail_set else ""
                     lines.append(f"- [Community {r['id']}]{tag}: {r['summary']}")
-                return c_id, lines, relevant_comm_ids
+                return primary_id, lines, relevant_comm_ids
             except Exception as e:
                 print(f"⚠️ Failed to fetch community summaries for planning: {e}")
-                return c_id, [], []
+                return primary_id, [], []
 
-        refs_needing_fetch = [r for r in selected_references if r["type"] != "NEAR_FIELD_MISSING" and r["cluster_id"] is not None]
+        refs_needing_fetch = [r for r in selected_references if r["type"] != "NEAR_FIELD_MISSING" and r.get("cluster_ids")]
         comm_summaries_cache = {}   # c_id -> lines
         comm_ids_cache = {}         # c_id -> list of community ids shown to LLM
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(refs_needing_fetch) or 1) as _ex:
@@ -335,35 +391,39 @@ class PlannerAgent:
                 reference_context_str += ref_block
                 continue
 
-            c_id = ref["cluster_id"]
+            c_id = ref.get("cluster_id") or (ref.get("cluster_ids") or [None])[0]
             if c_id is None: continue
 
             cluster_data = self.topology_knowledge["scene_clusters"][c_id]
             comm_summaries_text = comm_summaries_cache.get(c_id, [])
 
-            # Extract Common Patterns with Claims
+            # Extract Common Patterns with Claims — from all clusters in this reference pack
             patterns_text = []
-            for p_key in ["common_patterns_3", "common_patterns_4"]:
-                patterns = cluster_data.get(p_key, [])
-                # Take top 3 sorted by count
-                patterns.sort(key=lambda x: x.get("count", 0), reverse=True)
-                for pat in patterns[:3]:
-                    seq = pat.get("sequence", [])
-                    claim = pat.get("claim", "")
-                    if seq and claim:
-                        seq_str = " -> ".join(seq)
-                        patterns_text.append(f"- Pattern: [{seq_str}]\n  * Insight: {claim}")
+            for ref_c_id in ref.get("cluster_ids", [c_id]):
+                ref_cluster_data = self.topology_knowledge["scene_clusters"].get(ref_c_id, {})
+                for p_key in ["common_patterns_3", "common_patterns_4"]:
+                    patterns = ref_cluster_data.get(p_key, [])
+                    patterns.sort(key=lambda x: x.get("count", 0), reverse=True)
+                    for pat in patterns[:2]:
+                        seq = pat.get("sequence", [])
+                        claim = pat.get("claim", "")
+                        if seq and claim:
+                            seq_str = " -> ".join(seq)
+                            patterns_text.append(f"- Pattern: [{seq_str}]\n  * Insight: {claim}")
 
             patterns_section = ""
             if patterns_text:
                 patterns_section = "\n**Common Workflow Patterns & Insights:**\n" + "\n".join(patterns_text)
 
+            extra_clusters = ref.get("cluster_ids", [c_id])
+            cluster_note = f" (+{len(extra_clusters)-1} related clusters)" if len(extra_clusters) > 1 else ""
             ref_block = f"""
-            ### Source {idx + 1} ({ref['type']} - Dist: {1-ref['score']:.2f}): {cluster_data['name']}
+            ### Source {idx + 1} ({ref['type']} - Dist: {1-ref['score']:.2f}): {cluster_data['name']}{cluster_note}
             **Key Functional Communities in this domain:**
             {chr(10).join(comm_summaries_text)}
             {patterns_section}
             """
+            print(ref_block)
             reference_context_str += ref_block
 
         # Append shared-community hint so LLM knows which ones to avoid overusing
@@ -819,8 +879,17 @@ User-facing text: primarily Chinese; proper nouns/essential technical terms may 
   - `function`: At least 1 complete sentence. Must clearly state (1) what specific data/input this module receives, (2) what it does to that data, and (3) what output it produces. Never stop mid-sentence or leave the reader guessing.
   - `technical_methods`: **minimum 2 complete sentences**. Name the concrete technique, explain how it works in this domain, and state why it was chosen over alternatives.
   - Apply the same depth requirement to **sub_nodes** — each sub_node's `function` and `technical_methods` must also be at least 2 complete sentences, not one-liners.
-- **Subnodes**: Use sub_nodes to organize internal complexity. When a module has multiple internal steps, define them as sub_nodes rather than creating many top-level modules. This keeps the first impression clean while preserving detail.
-  - **Sub_node naming (CRITICAL)**: Sub_node names must be MORE specific than the parent module name. They must encode (a) the concrete domain object being processed (e.g., "货位空闲状态" not "状态分析"), (b) any key constraint or condition (e.g., "优先级变化时" or "超重预警"), and (c) the specific action performed. Avoid generic verbs like "处理/分析/检测" without a domain noun attached (e.g., use "货位冲突检测" not "异常检测").
+- **Subnodes**: Sub_nodes decompose the parent module's responsibility into traceable internal components. They fall into two types — choose the right one:
+  - **Type A — Processing Steps**: when the parent handles data through ordered stages (e.g., receive → filter → classify). Each sub_node represents one meaningful step.
+  - **Type B — Parallel Data Channels**: when the parent handles multiple simultaneous inputs or outputs (e.g., a multimodal input receiving text, audio, and video). Each sub_node represents one channel or data stream.
+  - **Sub_node naming (CRITICAL)**: Sub_node names follow the **same readability-first rule as module names** — they must be instantly understandable to a non-expert, describing *what the system does* in plain, scenario-specific language. Technical terms belong only in the `technical_methods` field, not in the name.
+    (a) **Stay in the parent's domain context**: a reader should be able to tell "this sub_node belongs to module X" from the name alone. Include a domain noun from the parent's scenario (e.g., if parent is "障碍感知", sub_nodes should mention 障碍 or related concepts, not abstract terms like "三维重构").
+    (b) **Use plain action + domain object**: describe *what happens* in everyday language. No algorithm names, no paper-title phrasing.
+    (c) For Type B (parallel channels): name each channel by the specific domain data it carries (e.g., "飞行器姿态信号", "环境深度图像"), not by modality type (e.g., not just "视频流").
+    BAD: "实时障碍物三维分布重构与安全航道筛选" (technical paper title, unreadable at a glance)
+    BAD: "RGB图像流" (too generic — no domain context)
+    GOOD (Type A): "障碍分布预测" + "可飞行路径筛选" (plain, domain-grounded, readable)
+    GOOD (Type B): "飞行器IMU姿态数据" + "环境障碍深度图像" (specific domain channels)
   - Sub_node `function` must follow the same IPO format as top-level: "接收[具体输入]，执行[具体操作]，输出[具体结果]". Minimum 1 complete sentence. Do NOT use vague one-liners like "负责处理数据" or "用于优化性能".
   - Sub_node `technical_methods`: minimum 2 complete sentences. Name the concrete technique, explain how it applies specifically to THIS sub_node's domain context (not a generic description), and state a specific constraint or trigger condition under which it activates.
 - Integrate all divergent-plan nodes meaningfully.
@@ -868,7 +937,7 @@ Use compact string format for `ports` to save space:
             "technical_methods": "name the concrete technique, explain HOW it processes data in this domain, and WHY it was chosen",
             "role": "input|output|processing|data",
             "references": "exact names from Retrieved Modules or 'None'",
-            "sub_nodes": [{{"name":"scenario-specific action+object (e.g., '货位冲突检测' not '异常检测')","function":"≥1 sentence: 接收[具体输入]，执行[具体操作]，输出[具体结果]","technical_methods":"≥2 sentences: name technique + how it works in this domain + activation condition"}}],
+            "sub_nodes": [{{"name":"plain readable name in parent's domain context — no algorithm names, no paper titles","function":"≥1 sentence: 接收[具体输入]，执行[具体操作]，输出[具体结果]","technical_methods":"≥2 sentences: name technique + how it works in this domain + activation condition"}}],
             "ports": {{
                 "incoming": ["ModA->分析结果", "ModB.SubX->控制信号"],
                 "outgoing": ["ModC->处理后数据", "ModA->检测到异常时"],
@@ -1152,7 +1221,11 @@ class EditorAgent:
         - Proper nouns and indispensable technical terms may remain in English.
 
         **Semantics Rule for Module and Subnodes**:
-            - **Naming (CRITICAL)**: action-oriented, **scenario-specific** — include concrete nouns from the user's domain. The name must be immediately understandable to a non-expert in the specific application context. No structural suffixes ("模块/单元/引擎/系统/组件/层"). No paper titles or algorithm names. Examples: "进度跟踪模块"→"采摘任务进度追踪"; "多维状态综合评估"→"机器人状态分析评估"; "沉浸式虚拟仿真"→"AR仓库场景映射"
+            - **Naming (CRITICAL)**: action-oriented, **scenario-specific** — include concrete nouns from the user's domain. The name must be immediately understandable to a non-expert in the specific application context. No structural suffixes ("模块/单元/引擎/系统/组件/层"). No paper titles or algorithm names. Technical terms belong only in `technical_methods`, not in the name. Examples: "进度跟踪模块"→"采摘任务进度追踪"; "多维状态综合评估"→"机器人状态分析评估"; "沉浸式虚拟仿真"→"AR仓库场景映射"
+            - **Sub_node naming (CRITICAL)**: Sub_nodes follow the same readability-first rule as module names. A sub_node's name must make its parent module's domain context recognizable at a glance, WITHOUT reading the parent name. Two sub_node types:
+              (a) **Processing steps**: name = plain domain action + domain object (e.g., "障碍分布预测", "飞行通道可行性判断"). BAD: "三维点云重构" (reads as standalone paper title).
+              (b) **Parallel data channels**: name = specific domain data type (e.g., "飞行器IMU姿态数据", "环境障碍深度图像"). BAD: "RGB视频流" (no domain context).
+              In both cases: no algorithm names, no paper-title phrasing, no generic nouns without domain qualification.
             - **function field**: explicitly state (1) what data/input this module receives, (2) what specific operation it performs, (3) what output it produces. Do NOT use vague phrases like "进行分析" or "实现决策" — say exactly WHAT is analyzed, WHAT decision is made.
             - A node can represent a key information unit when that information is central to user input, system output, or human understanding of the workflow. For these nodes, their name should describe the information being captured, organized or presented. Examples: "风险提示", "进度摘要", "任务上下文"; Avoid generic names such as "信息处理", "数据展示", "内容模块"
                - Avoid creating information-oriented nodes for every minor label, attribute, or annotation. Prefer them in the input/output nodes.
