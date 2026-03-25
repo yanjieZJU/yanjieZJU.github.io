@@ -121,7 +121,11 @@ function App() {
 
   const [modificationInput, setModificationInput] = useState(''); // 修改需求的输入
 
-  const [viewMode, setViewMode] = useState('edit'); // 'edit' = 编辑模式, 'result' = 方案全屏展示模式
+  const [viewMode, setViewMode] = useState('edit'); // 'edit' = 编辑+视角卡片, 'result' = 全屏方案展示
+
+  // Divergent perspectives state (populated before full plan generation)
+  const [divergentPerspectives, setDivergentPerspectives] = useState([]); // [{perspective, rationale, additional_anchors}]
+  const [planProgressMap, setPlanProgressMap] = useState({}); // index -> {percent, done}
 
   // 添加测试
   const [testJsonStr, setTestJsonStr] = useState('');
@@ -467,7 +471,11 @@ function App() {
     setProgress(0);
     setPlans([]);
     setNodeDetails({});
+    nodeDetailsSigRef.current = '';
     setProgressText('开始生成...');
+    setDivergentPerspectives([]);
+    setPlanProgressMap({});
+    thumbnailCycleRef.current = false;
     try {
       const anchorsPayload = nodes.map(n => ({
         user_term: n.data.label,
@@ -539,6 +547,19 @@ function App() {
             if (data.type === 'progress') {
               setProgress(data.percent || 0);
               setProgressText(data.message || '生成中...');
+              // Track per-plan progress: estimate based on overall progress and plans completed
+              setPlanProgressMap(prev => {
+                const completedCount = Object.values(prev).filter(v => v && v.done).length;
+                const inProgressIdx = completedCount; // next slot being worked on
+                const updated = { ...prev };
+                if (!updated[inProgressIdx] || !updated[inProgressIdx].done) {
+                  updated[inProgressIdx] = { percent: data.percent || 0, done: false };
+                }
+                return updated;
+              });
+            } else if (data.type === 'divergent_perspectives') {
+              // Show perspectives side-by-side in the right panel
+              setDivergentPerspectives(data.perspectives || []);
             } else if (data.type === 'plan') {
               // Add plan to state
               const initialHistory = [
@@ -548,14 +569,13 @@ function App() {
 
               newPlans = [...newPlans, planWithHistory];
               setPlans(newPlans);
+              // Mark this perspective slot as done
+              const planIdx = newPlans.length - 1;
+              setPlanProgressMap(prev => ({ ...prev, [planIdx]: { percent: 100, done: true } }));
 
               if (!isFirstPlanLoaded) {
                 isFirstPlanLoaded = true;
                 setActivePlanIndex(0);
-                if (data.plan_data.node_details) {
-                  setNodeDetails(data.plan_data.node_details);
-                }
-                setViewMode('result');
               }
             } else if (data.type === 'error') {
               console.error('Server error:', data.message);
@@ -1093,12 +1113,15 @@ function App() {
     } catch (e) { void e; }
   }, []);
 
-  // Capture thumbnail when active plan changes (after a short delay for render)
+  // Capture thumbnail when active plan changes in result mode (after a short delay for render)
   useEffect(() => {
-    if (plans.length === 0) return;
+    if (plans.length === 0 || viewMode !== 'result') return;
     const timer = setTimeout(() => captureThumbnail(activePlanIndex), 800);
     return () => clearTimeout(timer);
-  }, [activePlanIndex, plans.length, captureThumbnail]);
+  }, [activePlanIndex, plans.length, viewMode, captureThumbnail]);
+
+  const thumbnailCycleRef = useRef(false);
+
   const otherPlans = plans
     .map((plan, index) => ({ plan, index }))
     .filter((item) => item.index !== activePlanIndex);
@@ -1125,7 +1148,7 @@ function App() {
           <div className="sidebar-left">
 
             {/* 1. 需求 / 对话 面板 */}
-            <div className="left-card" style={viewMode === 'result' ? { flex: '1 1 auto', display: 'flex', flexDirection: 'column' } : { flex: '0 0 auto' }}>
+            <div className="left-card" style={(viewMode === 'result') ? { flex: '1 1 auto', display: 'flex', flexDirection: 'column' } : { flex: '0 0 auto' }}>
               <div style={{ marginBottom: '10px' }}>
                 <input
                   className="styled-input"
@@ -1174,7 +1197,7 @@ function App() {
                 placeholder={viewMode === 'result' ? "输入方案优化需求..." : "例如：设计一个包含RAG和LLM的历史教育系统..."}
                 value={viewMode === 'result' ? modificationInput : description}
                 onChange={(e) => {
-                  if (viewMode === 'edit') setDescription(e.target.value);
+                  if (viewMode !== 'result') setDescription(e.target.value);
                   else setModificationInput(e.target.value);
                 }}
                 disabled={loading}
@@ -1328,7 +1351,7 @@ function App() {
           </div>
 
           {/* --- 中间画布 (节点) --- */}
-          {viewMode !== 'result' && (
+          {viewMode === 'edit' && (
             <div className="panel canvas-panel" ref={reactFlowWrapper} style={{ height: '100%', width: '100%', overflow: 'hidden' }}>
               <div className="card-title" style={{ padding: '10px', borderBottom: '1px solid #eee', position: 'absolute', top: 0, left: 0, zIndex: 10, background: 'rgba(255,255,255,0.8)', width: '100%' }}>
                 节点编辑区
@@ -1375,8 +1398,125 @@ function App() {
             </div>
           )}
 
-          {/* --- 右侧边栏 (多方案展示区) --- */}
+          {/* --- 右侧边栏 (视角卡片 / 全屏方案) --- */}
             <div className="panel sidebar-right" style={{ display: 'flex', flexDirection: 'column', flex: viewMode === 'result' ? 1 : '0 0 60%', position: 'relative', minHeight: 0 }}>
+
+            {/* === 编辑模式：视角/方案卡片横排 === */}
+            {viewMode === 'edit' && (divergentPerspectives.length > 0 || plans.length > 0) && (
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                {/* Header */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#f5f5f5', flexShrink: 0 }}>
+                  <div style={{ fontWeight: 600, color: '#333', fontSize: '14px' }}>
+                    {loading ? `${progressText} ${progress}%` : `方案生成完成 — 点击卡片进入全屏查看`}
+                  </div>
+                  {!loading && plans.length > 0 && (
+                    <div style={{ fontSize: '12px', color: '#888' }}>{plans.length} / {divergentPerspectives.length || plans.length} 个方案已完成</div>
+                  )}
+                </div>
+                {/* Cards — 竖排 */}
+                <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {(divergentPerspectives.length > 0 ? divergentPerspectives : plans.map(p => ({ perspective: p.perspective, rationale: p.description, additional_anchors: [] }))).map((persp, idx) => {
+                    const completedPlan = plans[idx];
+                    const prog = planProgressMap[idx] || { percent: 0, done: false };
+                    const doneCount = Object.values(planProgressMap).filter(v => v && v.done).length;
+                    const isWaiting = !prog.done && idx > doneCount;
+                    const thumb = planThumbnails[idx];
+
+                    return (
+                      <div
+                        key={idx}
+                        onClick={completedPlan ? () => {
+                          nodeDetailsSigRef.current = ''; // force re-sync
+                          const details = completedPlan.node_details ?? completedPlan.module_details;
+                          if (details) setNodeDetails(details);
+                          setActivePlanIndex(idx);
+                          setViewMode('result');
+                        } : undefined}
+                        style={{
+                          border: `1px solid ${completedPlan ? '#c5d8fb' : '#e0e7f0'}`,
+                          borderRadius: '10px',
+                          backgroundColor: '#fff',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          overflow: 'hidden',
+                          cursor: completedPlan ? 'pointer' : 'default',
+                          boxShadow: completedPlan ? '0 2px 12px rgba(33,124,243,0.10)' : '0 1px 4px rgba(0,0,0,0.05)',
+                          transition: 'box-shadow 0.15s, border-color 0.15s, transform 0.15s',
+                        }}
+                        onMouseEnter={completedPlan ? e => { e.currentTarget.style.boxShadow = '0 4px 18px rgba(33,124,243,0.18)'; e.currentTarget.style.borderColor = '#217cf3'; } : undefined}
+                        onMouseLeave={completedPlan ? e => { e.currentTarget.style.boxShadow = '0 2px 12px rgba(33,124,243,0.10)'; e.currentTarget.style.borderColor = '#c5d8fb'; } : undefined}
+                      >
+                        {/* Card label */}
+                        <div style={{ padding: '14px 18px 10px', borderBottom: '1px solid #f0f0f0' }}>
+                          <span style={{
+                            fontSize: '13px', fontWeight: 700, padding: '3px 10px', borderRadius: '12px',
+                            backgroundColor: completedPlan ? '#e8f0fe' : '#f5f5f5',
+                            color: completedPlan ? '#1a56db' : '#999',
+                            marginRight: '8px',
+                          }}>方案{['一','二','三','四'][idx] || idx+1}</span>
+                          <span style={{ fontWeight: 700, fontSize: '18px', color: '#1a2436' }}>
+                            {persp ? persp.perspective : `方案 ${idx + 1}`}
+                          </span>
+                        </div>
+                        {/* Rationale */}
+                        {persp && persp.rationale && (
+                          <div style={{ padding: '10px 18px 8px', fontSize: '14px', color: '#505a6b', lineHeight: 1.7 }}>
+                            <div style={{ fontWeight: 600, color: '#888', fontSize: '13px', marginBottom: '5px' }}>设计视角</div>
+                            <div>{persp.rationale}</div>
+                          </div>
+                        )}
+                        {/* Anchor pills */}
+                        {persp && persp.additional_anchors && persp.additional_anchors.length > 0 && (
+                          <div style={{ padding: '0 18px 10px', display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                            {persp.additional_anchors.map((a, ai) => (
+                              <span key={ai} style={{
+                                fontSize: '13px', padding: '3px 10px', borderRadius: '4px',
+                                backgroundColor: '#f0f4ff', color: '#3b5fc0', border: '1px solid #c9d8f8'
+                              }}>{a.user_term}</span>
+                            ))}
+                          </div>
+                        )}
+                        {/* Thumbnail */}
+                        {thumb && (
+                          <div style={{ padding: '0 18px 10px' }}>
+                            <img src={thumb} alt="方案预览" style={{ width: '100%', height: 'auto', borderRadius: '6px', border: '1px solid #e8edf5', display: 'block' }} />
+                          </div>
+                        )}
+                        {/* Progress / CTA */}
+                        <div style={{ marginTop: 'auto', padding: '10px 18px 12px', borderTop: '1px solid #f0f0f0', backgroundColor: '#fafbfc' }}>
+                          {completedPlan ? (
+                            <div style={{ textAlign: 'center', color: '#217cf3', fontWeight: 600, fontSize: '14px' }}>点击进入全屏方案 →</div>
+                          ) : isWaiting ? (
+                            <div style={{ textAlign: 'center', color: '#bbb', fontSize: '13px' }}>等待生成...</div>
+                          ) : (
+                            <div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                                <span style={{ fontSize: '13px', color: '#666' }}>完整方案生成中</span>
+                                <span style={{ fontSize: '13px', color: '#666' }}>{prog.percent}%</span>
+                              </div>
+                              <div style={{ height: '5px', backgroundColor: '#e8edf5', borderRadius: '3px', overflow: 'hidden' }}>
+                                <div style={{ height: '100%', borderRadius: '3px', backgroundColor: '#217cf3', width: `${prog.percent}%`, transition: 'width 0.5s ease' }} />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* === 编辑模式：初始空白占位 === */}
+            {viewMode === 'edit' && divergentPerspectives.length === 0 && plans.length === 0 && (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ccc', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ fontSize: '36px' }}>💡</div>
+                <div style={{ fontSize: '14px', color: '#aaa' }}>生成方案后将在此处展示三个设计视角</div>
+              </div>
+            )}
+
+            {/* === 全屏结果模式（始终保留在DOM中，仅用display控制可见性，避免X6重建） === */}
+            <div style={{ display: viewMode === 'result' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
             {/* 工作表 Tabs */}
             <div style={{
               display: 'flex',
@@ -1432,85 +1572,27 @@ function App() {
                     <button
                       onClick={handleSaveSnapshot}
                       disabled={loading}
-                      style={{
-                        padding: '6px 15px',
-                        backgroundColor: '#ffffffff',
-                        color: '#2d76e2ff',
-                        border: '1px solid #2d76e2ff',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        fontSize: '13px',
-                        fontWeight: '500',
-                        whiteSpace: 'nowrap',
-                        flexShrink: 0
-                      }}
-                    >
-                      Save
-                    </button>
+                      style={{ padding: '6px 15px', backgroundColor: '#fff', color: '#2d76e2', border: '1px solid #2d76e2', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', fontWeight: '500', whiteSpace: 'nowrap', flexShrink: 0 }}
+                    >Save</button>
                     <button
                       onClick={handleRevertLast}
                       disabled={loading}
-                      style={{
-                        padding: '6px 15px',
-                        backgroundColor: '#ffffffff',
-                        color: '#2d76e2ff',
-                        border: '1px solid #2d76e2ff',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        fontSize: '13px',
-                        fontWeight: '500',
-                        whiteSpace: 'nowrap',
-                        flexShrink: 0
-                      }}
-                    >
-                      Revert
-                    </button>
+                      style={{ padding: '6px 15px', backgroundColor: '#fff', color: '#2d76e2', border: '1px solid #2d76e2', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', fontWeight: '500', whiteSpace: 'nowrap', flexShrink: 0 }}
+                    >Revert</button>
                     <button
                       onClick={handleExport}
                       disabled={loading}
-                      style={{
-                        padding: '6px 15px',
-                        backgroundColor: '#28a745',
-                        color: '#fff',
-                        border: '1px solid #28a745',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        fontSize: '13px',
-                        fontWeight: '500',
-                        whiteSpace: 'nowrap',
-                        flexShrink: 0
-                      }}
-                    >
-                      Export (.docx)
-                    </button>
+                      style={{ padding: '6px 15px', backgroundColor: '#28a745', color: '#fff', border: '1px solid #28a745', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', fontWeight: '500', whiteSpace: 'nowrap', flexShrink: 0 }}
+                    >Export (.docx)</button>
                     <button
-                      onClick={() => setViewMode(viewMode === 'result' ? 'edit' : 'result')}
-                      style={{
-                        padding: '6px 15px',
-                        backgroundColor: viewMode === 'result' ? '#fff' : '#217cf3',
-                        color: viewMode === 'result' ? '#217cf3' : '#fff',
-                        border: '1px solid #217cf3',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        fontSize: '13px',
-                        fontWeight: '500',
-                        whiteSpace: 'nowrap',
-                        flexShrink: 0
-                      }}
-                    >
-                      {viewMode === 'result' ? '← 返回工作区' : '全屏查看方案'}
-                    </button>
+                      onClick={() => setViewMode('edit')}
+                      style={{ padding: '6px 15px', backgroundColor: '#fff', color: '#217cf3', border: '1px solid #217cf3', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', fontWeight: '500', whiteSpace: 'nowrap', flexShrink: 0 }}
+                    >← 返回方案选择</button>
                   </div>
                 )}
               </div>
               {isMorePerspectivesOpen && otherPlans.length > 0 && (
-                <div style={{
-                  margin: '0 12px 10px',
-                  padding: '8px',
-                  border: '1px solid #e3e8f0',
-                  borderRadius: '8px',
-                  backgroundColor: '#fff'
-                }}>
+                <div style={{ margin: '0 12px 10px', padding: '8px', border: '1px solid #e3e8f0', borderRadius: '8px', backgroundColor: '#fff' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '10px' }}>
                     {otherPlans.map(({ plan, index }) => {
                       const mods = getProcessingModules(plan.node_details ?? plan.module_details);
@@ -1519,36 +1601,21 @@ function App() {
                         <div
                           key={index}
                           onClick={() => { setActivePlanIndex(index); setIsMorePerspectivesOpen(false); }}
-                          style={{
-                            border: '1px solid #e8edf5',
-                            borderRadius: '8px',
-                            padding: '10px',
-                            cursor: 'pointer',
-                            backgroundColor: '#f9fbff',
-                            transition: 'box-shadow 0.15s, border-color 0.15s',
-                          }}
+                          style={{ border: '1px solid #e8edf5', borderRadius: '8px', padding: '10px', cursor: 'pointer', backgroundColor: '#f9fbff', transition: 'box-shadow 0.15s, border-color 0.15s' }}
                           onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 2px 10px rgba(33,124,243,0.15)'; e.currentTarget.style.borderColor = '#a8c8f8'; }}
                           onMouseLeave={e => { e.currentTarget.style.boxShadow = ''; e.currentTarget.style.borderColor = '#e8edf5'; }}
                         >
-                          <div style={{ fontWeight: 600, color: '#2a3550', marginBottom: '3px', fontSize: '13px' }}>
-                            {plan.perspective || `方案 ${index + 1}`}
-                          </div>
-                          <div style={{ color: '#596579', fontSize: '11px', lineHeight: 1.4, marginBottom: mods.length ? 5 : 0 }}>
-                            {firstSentence(plan.overall_description || plan.description)}
-                          </div>
+                          <div style={{ fontWeight: 600, color: '#2a3550', marginBottom: '3px', fontSize: '13px' }}>{plan.perspective || `方案 ${index + 1}`}</div>
+                          <div style={{ color: '#596579', fontSize: '11px', lineHeight: 1.4, marginBottom: mods.length ? 5 : 0 }}>{firstSentence(plan.overall_description || plan.description)}</div>
                           {mods.length > 0 && (
                             <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginBottom: 8 }}>
-                              {mods.map(m => (
-                                <span key={m} style={{ fontSize: '10px', background: '#fff4df', color: '#9a6700', border: '1px solid #f59e0b', borderRadius: 3, padding: '1px 5px', whiteSpace: 'nowrap' }}>{m}</span>
-                              ))}
+                              {mods.map(m => (<span key={m} style={{ fontSize: '10px', background: '#fff4df', color: '#9a6700', border: '1px solid #f59e0b', borderRadius: 3, padding: '1px 5px', whiteSpace: 'nowrap' }}>{m}</span>))}
                             </div>
                           )}
                           {thumb ? (
                             <img src={thumb} alt="方案预览" style={{ width: '100%', height: 'auto', borderRadius: 5, border: '1px solid #e0e7f0', display: 'block' }} />
                           ) : (
-                            <div style={{ width: '100%', height: 80, background: '#f0f4fa', borderRadius: 5, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#aaa', fontSize: 11 }}>
-                              预览加载中…
-                            </div>
+                            <div style={{ width: '100%', height: 80, background: '#f0f4fa', borderRadius: 5, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#aaa', fontSize: 11 }}>预览加载中…</div>
                           )}
                         </div>
                       );
@@ -1583,7 +1650,6 @@ function App() {
               {/* 节点详情部分 — 下方滚动面板 */}
               <div style={{ flexShrink: 0, maxHeight: '280px', overflowY: 'auto', backgroundColor: '#fafafa', borderTop: '1px solid #e0e0e0', padding: '12px 20px' }}>
                 {!selectedNodeInfo ? (
-                  /* 收起时：显示总体描述 */
                   plans.length > 0 && plans[activePlanIndex] && plans[activePlanIndex].description ? (
                     <div style={{ fontSize: '0.85rem', color: '#555', lineHeight: 1.6 }}>
                       <strong style={{ color: '#333', display: 'block', marginBottom: '5px', fontSize: '0.88rem' }}>总体描述</strong>
@@ -1593,9 +1659,7 @@ function App() {
                     <div style={{ color: '#bbb', fontSize: '0.85rem' }}>点击图表节点查看详情</div>
                   )
                 ) : (
-                  /* 选中节点时：三栏 + 来源通栏 */
                   <div>
-                    {/* 节点标题行 */}
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
                       <div>
                         <strong style={{ color: '#222', fontSize: '0.95rem' }}>{selectedNodeInfo.name}</strong>
@@ -1605,65 +1669,30 @@ function App() {
                       </div>
                       <div style={{ display: 'flex', gap: '6px' }}>
                         {!isNodeDetailEditing ? (
-                          <button
-                            onClick={() => setIsNodeDetailEditing(true)}
-                            disabled={loading}
-                            style={{ padding: '3px 10px', background: '#fff', border: '1px solid #d0d7de', color: '#555', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}
-                          >
-                            编辑
-                          </button>
+                          <button onClick={() => setIsNodeDetailEditing(true)} disabled={loading} style={{ padding: '3px 10px', background: '#fff', border: '1px solid #d0d7de', color: '#555', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>编辑</button>
                         ) : (
                           <>
-                            <button
-                              onClick={handleSaveNodeDetailDraft}
-                              disabled={loading}
-                              style={{ padding: '3px 10px', background: '#217cf3', border: '1px solid #217cf3', color: '#fff', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}
-                            >
-                              保存
-                            </button>
-                            <button
-                              onClick={() => { setNodeDetailDraft({ function: selectedNodeInfo.function || '', technical_methods: selectedNodeInfo.technical_methods || '' }); setIsNodeDetailEditing(false); }}
-                              disabled={loading}
-                              style={{ padding: '3px 10px', background: '#fff', border: '1px solid #d0d7de', color: '#666', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}
-                            >
-                              取消
-                            </button>
+                            <button onClick={handleSaveNodeDetailDraft} disabled={loading} style={{ padding: '3px 10px', background: '#217cf3', border: '1px solid #217cf3', color: '#fff', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>保存</button>
+                            <button onClick={() => { setNodeDetailDraft({ function: selectedNodeInfo.function || '', technical_methods: selectedNodeInfo.technical_methods || '' }); setIsNodeDetailEditing(false); }} disabled={loading} style={{ padding: '3px 10px', background: '#fff', border: '1px solid #d0d7de', color: '#666', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>取消</button>
                           </>
                         )}
                       </div>
                     </div>
-                    {/* 三栏：功能 | 技术方法 | 输入/输出 */}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '10px' }}>
                       <div style={{ background: '#fff', border: '1px solid #eee', borderRadius: '6px', padding: '8px 10px' }}>
                         <strong style={{ color: '#444', fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>功能</strong>
                         {isNodeDetailEditing ? (
-                          <textarea
-                            className="styled-input"
-                            rows={3}
-                            value={nodeDetailDraft.function}
-                            onChange={(e) => setNodeDetailDraft((prev) => ({ ...prev, function: e.target.value }))}
-                            style={{ marginTop: 0, marginBottom: 0, resize: 'vertical', fontSize: '0.82rem', lineHeight: 1.4 }}
-                          />
+                          <textarea className="styled-input" rows={3} value={nodeDetailDraft.function} onChange={(e) => setNodeDetailDraft((prev) => ({ ...prev, function: e.target.value }))} style={{ marginTop: 0, marginBottom: 0, resize: 'vertical', fontSize: '0.82rem', lineHeight: 1.4 }} />
                         ) : (
-                          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5, color: '#333', fontSize: '0.82rem' }}>
-                            {nodeDetailDraft.function || '暂无'}
-                          </div>
+                          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5, color: '#333', fontSize: '0.82rem' }}>{nodeDetailDraft.function || '暂无'}</div>
                         )}
                       </div>
                       <div style={{ background: '#fff', border: '1px solid #eee', borderRadius: '6px', padding: '8px 10px' }}>
                         <strong style={{ color: '#444', fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>技术方法</strong>
                         {isNodeDetailEditing ? (
-                          <textarea
-                            className="styled-input"
-                            rows={3}
-                            value={nodeDetailDraft.technical_methods}
-                            onChange={(e) => setNodeDetailDraft((prev) => ({ ...prev, technical_methods: e.target.value }))}
-                            style={{ marginTop: 0, marginBottom: 0, resize: 'vertical', fontSize: '0.82rem', lineHeight: 1.4 }}
-                          />
+                          <textarea className="styled-input" rows={3} value={nodeDetailDraft.technical_methods} onChange={(e) => setNodeDetailDraft((prev) => ({ ...prev, technical_methods: e.target.value }))} style={{ marginTop: 0, marginBottom: 0, resize: 'vertical', fontSize: '0.82rem', lineHeight: 1.4 }} />
                         ) : (
-                          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5, color: '#333', fontSize: '0.82rem' }}>
-                            {nodeDetailDraft.technical_methods || '暂无'}
-                          </div>
+                          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5, color: '#333', fontSize: '0.82rem' }}>{nodeDetailDraft.technical_methods || '暂无'}</div>
                         )}
                       </div>
                       <div style={{ background: '#fff', border: '1px solid #eee', borderRadius: '6px', padding: '8px 10px' }}>
@@ -1677,25 +1706,18 @@ function App() {
                             if (incoming.length === 0 && outgoing.length === 0) return <span style={{ color: '#bbb' }}>暂无</span>;
                             return (
                               <>
-                                {incoming.length > 0 && (
-                                  <div><span style={{ color: '#3b82f6' }}>输入: </span>{incoming.map((p, i) => <span key={i}>{p.edge_label || p.source_node || JSON.stringify(p)}{i < incoming.length - 1 ? '、' : ''}</span>)}</div>
-                                )}
-                                {outgoing.length > 0 && (
-                                  <div><span style={{ color: '#22c55e' }}>输出: </span>{outgoing.map((p, i) => <span key={i}>{p.edge_label || p.target_mod || p.target_node || JSON.stringify(p)}{i < outgoing.length - 1 ? '、' : ''}</span>)}</div>
-                                )}
+                                {incoming.length > 0 && (<div><span style={{ color: '#3b82f6' }}>输入: </span>{incoming.map((p, i) => <span key={i}>{p.edge_label || p.source_node || JSON.stringify(p)}{i < incoming.length - 1 ? '、' : ''}</span>)}</div>)}
+                                {outgoing.length > 0 && (<div><span style={{ color: '#22c55e' }}>输出: </span>{outgoing.map((p, i) => <span key={i}>{p.edge_label || p.target_mod || p.target_node || JSON.stringify(p)}{i < outgoing.length - 1 ? '、' : ''}</span>)}</div>)}
                               </>
                             );
                           })()}
                         </div>
                       </div>
                     </div>
-                    {/* 来源通栏 */}
                     {(() => {
-                      // First try used_references from the plan (full doc entries)
                       const usedRefs = plans[activePlanIndex]?.used_references;
                       const nodeName = selectedNodeInfo.name;
                       const fullEntries = usedRefs && nodeName && usedRefs[nodeName];
-                      // Fall back to the module-level references string
                       const refStr = selectedNodeInfo.references || selectedNodeInfo.reference;
                       const hasAny = (fullEntries && fullEntries.length > 0) || (refStr && refStr !== 'None' && refStr !== '');
                       if (!hasAny) return null;
@@ -1710,18 +1732,12 @@ function App() {
                                     [{i + 1}] {entry.name || '未知来源'}
                                     {entry.source && <span style={{ fontWeight: 400, color: '#7a8a9e', marginLeft: '6px', fontSize: '0.75rem' }}>{entry.source}</span>}
                                   </div>
-                                  {entry.text && (
-                                    <div style={{ fontSize: '0.78rem', color: '#444', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                                      {entry.text}
-                                    </div>
-                                  )}
+                                  {entry.text && (<div style={{ fontSize: '0.78rem', color: '#444', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{entry.text}</div>)}
                                 </div>
                               ))}
                             </div>
                           ) : (
-                            <div style={{ fontSize: '0.8rem', color: '#555', lineHeight: 1.6 }}>
-                              {refStr}
-                            </div>
+                            <div style={{ fontSize: '0.8rem', color: '#555', lineHeight: 1.6 }}>{refStr}</div>
                           )}
                         </div>
                       );
@@ -1729,6 +1745,7 @@ function App() {
                   </div>
                 )}
               </div>
+            </div>
             </div>
           </div>
         </div>

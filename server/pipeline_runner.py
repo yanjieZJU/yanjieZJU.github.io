@@ -43,6 +43,21 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
     if structural_hints:
         print(integrator.format_hints(structural_hints))
 
+    # Emit divergent perspectives so frontend can display them immediately
+    if divergent_plans:
+        perspectives_data = [
+            {
+                "perspective": p.get("perspective", ""),
+                "rationale": p.get("rationale", ""),
+                "additional_anchors": [
+                    {"user_term": a.get("user_term", "")}
+                    for a in p.get("additional_anchors", [])
+                ]
+            }
+            for p in divergent_plans
+        ]
+        yield json.dumps({"type": "divergent_perspectives", "perspectives": perspectives_data}) + "\n"
+
     yield json.dumps({"type": "progress", "message": "Extracting domain knowledge and base nodes...", "percent": 35}) + "\n"
     print(f"\n🎯 Base anchor retrieval complete ({len(base_nodes_map)} anchors).")
     
