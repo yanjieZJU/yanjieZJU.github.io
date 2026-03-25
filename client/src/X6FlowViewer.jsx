@@ -209,11 +209,10 @@ function runRoleLayout(nodes, edges) {
     let h = NODE_H;
     let overlayTop = 0;
     if (n.isGroup) {
-      const titleLines = wrapTextToLines(titleText, innerW, 14, 'bold');
-      const descLines = wrapTextToLines(rawDesc, innerW, 12, 'normal');
-      const titleH = Math.max(20, titleLines.length * 16);
-      const descH = descLines.length > 0 ? descLines.length * 14 : 0;
-      overlayTop = 10 + titleH + (descH ? 6 + descH : 0);
+      const titleLines = wrapTextToLines(titleText, innerW, 20, 'bold');
+      const titleH = Math.max(24, titleLines.length * 22);
+      const descH = 0; // description hidden
+      overlayTop = 10 + titleH;
 
       // If collapsed, use minimal height; if expanded, calculate based on children
       if (n.collapsed) {
@@ -229,12 +228,10 @@ function runRoleLayout(nodes, edges) {
         h = Math.max(160, childTop + childrenTotalH + 24);
       }
     } else {
-      const titleLines = wrapTextToLines(titleText, innerW, 17, 'bold');
-      const descLines = wrapTextToLines(rawDesc, innerW, 15, 'normal');
-      const gap = 12;
-      const titleH = Math.max(20, titleLines.length * 18);
-      const descH = descLines.length > 0 ? Math.max(14, descLines.length * 16) : 0;
-      h = Math.max(NODE_H, 20 + titleH + (descH ? gap + descH : 0) + 10);
+      const titleLines = wrapTextToLines(titleText, innerW, 20, 'bold');
+      const titleH = Math.max(24, titleLines.length * 22);
+      const descH = 0; // description hidden
+      h = Math.max(NODE_H, 20 + titleH + 10);
     }
     return { w, h, overlayTop };
   }
@@ -728,11 +725,11 @@ function renderGraph(graph, nodeDetails, options = {}) {
     const iconText = icons.join(' ');
     const titleText = n.label;
     const innerW = Math.max(10, pos.w - 24);
-    const titleLines = wrapTextToLines(titleText, innerW, 16, 'bold');
+    const titleLines = wrapTextToLines(titleText, innerW, 20, 'bold');
     const rawDesc = (n.desc || '').replace(/\s+/g, ' ').trim();
-    const descLines = wrapTextToLines(rawDesc, innerW, 12, 'normal');
-    const titleH = Math.max(20, titleLines.length * 16);
-    const descH = descLines.length > 0 ? descLines.length * 14 : 0;
+    const descLines = wrapTextToLines(rawDesc, innerW, 13, 'normal');
+    const titleH = Math.max(24, titleLines.length * 22);
+    const descH = 0; // description hidden
     const overlayTop = 10 + titleH + (descH ? 6 + descH : 0);
     overlayTopMap[n.id] = overlayTop;
 
@@ -766,7 +763,7 @@ function renderGraph(graph, nodeDetails, options = {}) {
       zIndex: 5,
       attrs: {
         body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-        label: { text: titleLines.join('\n'), fontSize: 16, fontWeight: 'bold', fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
+        label: { text: titleLines.join('\n'), fontSize: 20, fontWeight: 'bold', fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
       },
       ports: { groups: {}, items: [] },
     });
@@ -811,7 +808,7 @@ function renderGraph(graph, nodeDetails, options = {}) {
       zIndex: 5,
       attrs: {
         body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-        label: { text: descLines.join('\n'), fontSize: 14, fill: '#666', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
+        label: { text: '' /* description hidden */, fontSize: 13, fill: '#666', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
       },
       ports: { groups: {}, items: [] },
     });
@@ -835,12 +832,12 @@ function renderGraph(graph, nodeDetails, options = {}) {
       const titleText = n.label;
       const innerW = Math.max(10, pos.w - 24);
       const rawDesc = (n.desc || '').replace(/\s+/g, ' ').trim();
-      const titleLines = wrapTextToLines(titleText, innerW, 17, 'bold');
+      const titleLines = wrapTextToLines(titleText, innerW, 20, 'bold');
       const descLines = wrapTextToLines(rawDesc, innerW, 15, 'normal');
       const gap = 12;
-      const titleH = Math.max(20, titleLines.length * 18);
-      const descH = descLines.length > 0 ? Math.max(14, descLines.length * 16) : 0;
-      const dynH = Math.max(pos.h, 20 + titleH + (descH ? gap + descH : 0) + 10);
+      const titleH = Math.max(24, titleLines.length * 22);
+      const descH = 0; // description hidden
+      const dynH = Math.max(pos.h, 20 + titleH + 10);
       const group = graph.addNode({
         id: n.id,
         shape: 'rect',
@@ -867,7 +864,7 @@ function renderGraph(graph, nodeDetails, options = {}) {
         zIndex: 5,
         attrs: {
           body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-          label: { text: titleLines.join('\n'), fontSize: 17, fontWeight: 'bold', fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
+          label: { text: titleLines.join('\n'), fontSize: 20, fontWeight: 'bold', fill: theme.text, textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
         },
         ports: { groups: {}, items: [] },
       });
@@ -895,7 +892,7 @@ function renderGraph(graph, nodeDetails, options = {}) {
         zIndex: 5,
         attrs: {
           body: { fill: 'transparent', stroke: 'transparent', pointerEvents: 'none' },
-          label: { text: descLines.join('\n'), fontSize: 15, fill: '#666', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
+          label: { text: '' /* description hidden */, fontSize: 15, fill: '#666', textAnchor: 'middle', textVerticalAnchor: 'top', refX: 0.5, refY: 0, pointerEvents: 'none' },
         },
         ports: { groups: {}, items: [] },
       });

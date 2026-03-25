@@ -57,6 +57,12 @@ function App() {
   const [plans, setPlans] = useState([]); // 存储所有返回的方案
   const [activePlanIndex, setActivePlanIndex] = useState(0); // 当前激活的方案索引
   const [isMorePerspectivesOpen, setIsMorePerspectivesOpen] = useState(false);
+  const [isCompareOpen, setIsCompareOpen] = useState(false);
+  const [comparePanelWidth, setComparePanelWidth] = useState(320);
+  const compareDragRef = React.useRef(null);
+  // Modules quoted from other plans, to be attached as context to the next edit message
+  // Each entry: { planIndex, planName, moduleName, moduleData }
+  const [quotedModules, setQuotedModules] = useState([]);
   const plansRef = useRef(plans);
   const nodeDetailsSigRef = useRef('');
 
@@ -598,8 +604,18 @@ function App() {
     if (!modificationInput.trim()) return;
     if (plans.length === 0 || !plans[activePlanIndex]) return;
 
-    // Store user message immediately
-    const userMsg = { role: 'user', content: modificationInput, timestamp: Date.now() };
+    // Snapshot quoted modules before clearing
+    const referencedModules = quotedModules.map(q => ({
+      plan_name: q.planName,
+      module_name: q.moduleName,
+      module_data: q.moduleData,
+    }));
+
+    // Store user message with quoted module context shown inline
+    const quotedSummary = referencedModules.length > 0
+      ? `\n\n[引用模块: ${referencedModules.map(r => `${r.plan_name}·${r.module_name}`).join('、')}]`
+      : '';
+    const userMsg = { role: 'user', content: modificationInput + quotedSummary, timestamp: Date.now() };
 
     // Store user message immediately and update the CURRENT branch/tab
     setPlans(prevPlans => {
@@ -624,17 +640,19 @@ function App() {
 
       const payload = {
         session_id: sessionId.trim() || undefined,
-        plan_id: currentPlan.plan_id, // Pass plan_id
+        plan_id: currentPlan.plan_id,
         current_plan: {
           module_details: latestNodeDetails,
           overall_description: currentPlan.description,
         },
         instruction: modificationInput,
-        original_query: description
+        original_query: description,
+        referenced_modules: referencedModules.length > 0 ? referencedModules : undefined,
       };
 
-      // Clear input immediately
+      // Clear input and quoted modules immediately
       setModificationInput('');
+      setQuotedModules([]);
 
       const response = await fetch(`${API_BASE}/edit`, {
         method: 'POST',
@@ -1191,17 +1209,34 @@ function App() {
                 </div>
               )}
 
+              {viewMode === 'result' && quotedModules.length > 0 && (
+                <div style={{ flexShrink: 0, marginBottom: '6px', padding: '6px 8px', backgroundColor: '#eef6ff', border: '1px solid #c5d8fb', borderRadius: '6px' }}>
+                  <div style={{ fontSize: '10px', color: '#888', fontWeight: 600, marginBottom: '4px' }}>已引用模块（将附加到下一条消息）</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                    {quotedModules.map((q, i) => (
+                      <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', backgroundColor: '#fff', border: '1px solid #217cf3', borderRadius: '4px', padding: '2px 6px', fontSize: '11px', color: '#1a56db' }}>
+                        <span style={{ fontSize: '10px', color: '#888' }}>{q.planName}·</span>
+                        {q.moduleName}
+                        <span
+                          style={{ cursor: 'pointer', color: '#aaa', marginLeft: '1px', fontSize: '12px', lineHeight: 1 }}
+                          onClick={() => setQuotedModules(prev => prev.filter((_, idx) => idx !== i))}
+                        >×</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <textarea
                 className="styled-input"
-                rows={viewMode === 'result' ? 3 : 4}
-                placeholder={viewMode === 'result' ? "输入方案优化需求..." : "例如：设计一个包含RAG和LLM的历史教育系统..."}
                 value={viewMode === 'result' ? modificationInput : description}
+                placeholder={viewMode === 'result' ? '输入修改指令...' : '描述您的系统需求...'}
                 onChange={(e) => {
                   if (viewMode !== 'result') setDescription(e.target.value);
                   else setModificationInput(e.target.value);
                 }}
                 disabled={loading}
-                style={viewMode === 'result' ? { flexShrink: 0, resize: 'none' } : {}}
+                style={viewMode === 'result' ? { flexShrink: 0, resize: 'vertical', minHeight: '80px' } : {}}
               />
 
               {viewMode === 'result' && (
@@ -1520,112 +1555,53 @@ function App() {
             {/* 工作表 Tabs */}
             <div style={{
               display: 'flex',
-              flexDirection: 'column',
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
               borderBottom: '1px solid #ccc',
               backgroundColor: '#f5f5f5',
-              gap: '4px'
+              flexShrink: 0,
+              flexWrap: 'wrap',
+              gap: '4px',
+              padding: '0 4px',
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', flex: '1 1 320px', minWidth: 0, overflowX: 'auto' }}>
-                  {activePlan ? (
-                  <div
-                    onClick={() => setIsMorePerspectivesOpen(false)}
-                    style={{
-                      padding: '10px 20px',
-                      cursor: 'pointer',
-                      backgroundColor: '#fff',
-                      borderBottom: '2px solid #217cf3',
-                      fontWeight: 'bold',
-                      color: '#217cf3',
-                      whiteSpace: 'nowrap',
-                      flexShrink: 0,
-                    }}
-                  >
+              {/* 当前方案名 */}
+              <div style={{ display: 'flex', alignItems: 'center', minWidth: 0, flex: '1 1 200px', overflowX: 'hidden' }}>
+                {activePlan ? (
+                  <div style={{ padding: '10px 16px', fontWeight: 'bold', color: '#217cf3', borderBottom: '2px solid #217cf3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 280 }}>
                     {activePlan.perspective || `方案 ${activePlanIndex + 1}`}
                   </div>
                 ) : (
-                  <div style={{ padding: '10px 20px', color: '#999' }}>暂无方案</div>
-                )}
-                {otherPlans.length > 0 && (
-                  <div
-                    onClick={() => setIsMorePerspectivesOpen((prev) => !prev)}
-                    style={{
-                      padding: '8px 12px',
-                      cursor: 'pointer',
-                      marginLeft: '8px',
-                      borderRadius: '6px',
-                      border: '1px solid #d5dbe7',
-                      backgroundColor: isMorePerspectivesOpen ? '#eaf2ff' : '#fff',
-                      color: '#3e4a5a',
-                      whiteSpace: 'nowrap',
-                      flexShrink: 0,
-                      fontSize: '13px',
-                    }}
-                  >
-                    {`查看其他领域类比（+${otherPlans.length}）`}
-                  </div>
-                )}
-                </div>
-
-                {plans.length > 0 && (
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end', padding: '8px 12px', maxWidth: '100%' }}>
-                    <button
-                      onClick={handleSaveSnapshot}
-                      disabled={loading}
-                      style={{ padding: '6px 15px', backgroundColor: '#fff', color: '#2d76e2', border: '1px solid #2d76e2', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', fontWeight: '500', whiteSpace: 'nowrap', flexShrink: 0 }}
-                    >Save</button>
-                    <button
-                      onClick={handleRevertLast}
-                      disabled={loading}
-                      style={{ padding: '6px 15px', backgroundColor: '#fff', color: '#2d76e2', border: '1px solid #2d76e2', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', fontWeight: '500', whiteSpace: 'nowrap', flexShrink: 0 }}
-                    >Revert</button>
-                    <button
-                      onClick={handleExport}
-                      disabled={loading}
-                      style={{ padding: '6px 15px', backgroundColor: '#28a745', color: '#fff', border: '1px solid #28a745', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', fontWeight: '500', whiteSpace: 'nowrap', flexShrink: 0 }}
-                    >Export (.docx)</button>
-                    <button
-                      onClick={() => setViewMode('edit')}
-                      style={{ padding: '6px 15px', backgroundColor: '#fff', color: '#217cf3', border: '1px solid #217cf3', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', fontWeight: '500', whiteSpace: 'nowrap', flexShrink: 0 }}
-                    >← 返回方案选择</button>
-                  </div>
+                  <div style={{ padding: '10px 16px', color: '#999' }}>暂无方案</div>
                 )}
               </div>
-              {isMorePerspectivesOpen && otherPlans.length > 0 && (
-                <div style={{ margin: '0 12px 10px', padding: '8px', border: '1px solid #e3e8f0', borderRadius: '8px', backgroundColor: '#fff' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '10px' }}>
-                    {otherPlans.map(({ plan, index }) => {
-                      const mods = getProcessingModules(plan.node_details ?? plan.module_details);
-                      const thumb = planThumbnails[index];
-                      return (
-                        <div
-                          key={index}
-                          onClick={() => { setActivePlanIndex(index); setIsMorePerspectivesOpen(false); }}
-                          style={{ border: '1px solid #e8edf5', borderRadius: '8px', padding: '10px', cursor: 'pointer', backgroundColor: '#f9fbff', transition: 'box-shadow 0.15s, border-color 0.15s' }}
-                          onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 2px 10px rgba(33,124,243,0.15)'; e.currentTarget.style.borderColor = '#a8c8f8'; }}
-                          onMouseLeave={e => { e.currentTarget.style.boxShadow = ''; e.currentTarget.style.borderColor = '#e8edf5'; }}
-                        >
-                          <div style={{ fontWeight: 600, color: '#2a3550', marginBottom: '3px', fontSize: '13px' }}>{plan.perspective || `方案 ${index + 1}`}</div>
-                          <div style={{ color: '#596579', fontSize: '11px', lineHeight: 1.4, marginBottom: mods.length ? 5 : 0 }}>{firstSentence(plan.overall_description || plan.description)}</div>
-                          {mods.length > 0 && (
-                            <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginBottom: 8 }}>
-                              {mods.map(m => (<span key={m} style={{ fontSize: '10px', background: '#fff4df', color: '#9a6700', border: '1px solid #f59e0b', borderRadius: 3, padding: '1px 5px', whiteSpace: 'nowrap' }}>{m}</span>))}
-                            </div>
-                          )}
-                          {thumb ? (
-                            <img src={thumb} alt="方案预览" style={{ width: '100%', height: 'auto', borderRadius: 5, border: '1px solid #e0e7f0', display: 'block' }} />
-                          ) : (
-                            <div style={{ width: '100%', height: 80, background: '#f0f4fa', borderRadius: 5, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#aaa', fontSize: 11 }}>预览加载中…</div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+              {/* 右侧按钮组 */}
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', padding: '6px 8px' }}>
+                {otherPlans.length > 0 && (
+                  <button
+                    onClick={() => setIsCompareOpen(prev => !prev)}
+                    style={{
+                      padding: '7px 16px', fontSize: '14px', fontWeight: 600,
+                      backgroundColor: isCompareOpen ? '#e8f0fe' : '#fff',
+                      color: isCompareOpen ? '#1a56db' : '#3e4a5a',
+                      border: `1px solid ${isCompareOpen ? '#c5d8fb' : '#d5dbe7'}`,
+                      borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+                    }}
+                  >对比视图 ◫</button>
+                )}
+                {plans.length > 0 && (<>
+                  <button onClick={handleSaveSnapshot} disabled={loading} style={{ padding: '5px 12px', backgroundColor: '#fff', color: '#2d76e2', border: '1px solid #2d76e2', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', fontWeight: '500', whiteSpace: 'nowrap', flexShrink: 0 }}>Save</button>
+                  <button onClick={handleRevertLast} disabled={loading} style={{ padding: '5px 12px', backgroundColor: '#fff', color: '#2d76e2', border: '1px solid #2d76e2', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', fontWeight: '500', whiteSpace: 'nowrap', flexShrink: 0 }}>Revert</button>
+                  <button onClick={handleExport} disabled={loading} style={{ padding: '5px 12px', backgroundColor: '#28a745', color: '#fff', border: '1px solid #28a745', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', fontWeight: '500', whiteSpace: 'nowrap', flexShrink: 0 }}>Export (.docx)</button>
+                  <button onClick={() => setViewMode('edit')} style={{ padding: '5px 12px', backgroundColor: '#fff', color: '#217cf3', border: '1px solid #217cf3', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', fontWeight: '500', whiteSpace: 'nowrap', flexShrink: 0 }}>← 返回方案选择</button>
+                </>)}
+              </div>
             </div>
 
-            <div style={{ display: 'flex', flex: 1, overflow: 'hidden', flexDirection: 'column' }}>
+            {/* 主内容：画布 + 右侧对比栏 */}
+            <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+              {/* 左侧：主画布 + 节点详情 */}
+              <div style={{ display: 'flex', flex: 1, overflow: 'hidden', flexDirection: 'column', minWidth: 0 }}>
               {/* 渲染图部分 */}
               <div className="mermaid-wrapper" style={{ flex: 1, overflow: 'hidden', borderBottom: '1px solid #eee', position: 'relative', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
                 <div style={{ flex: 1, minHeight: 0, width: '100%' }}>
@@ -1662,7 +1638,7 @@ function App() {
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
                       <div>
-                        <strong style={{ color: '#222', fontSize: '0.95rem' }}>{selectedNodeInfo.name}</strong>
+                        <strong style={{ color: '#222', fontSize: '1.15rem' }}>{selectedNodeInfo.name}</strong>
                         {selectedNodeInfo.isSubNode && (
                           <span style={{ fontSize: '0.78rem', color: '#888', marginLeft: '8px' }}>所属: {selectedNodeInfo.parentModule}</span>
                         )}
@@ -1745,6 +1721,140 @@ function App() {
                   </div>
                 )}
               </div>
+            </div>
+
+              {/* 右侧对比栏 */}
+              {isCompareOpen && otherPlans.length > 0 && (
+                <div style={{
+                  width: comparePanelWidth + 'px', flexShrink: 0,
+                  borderLeft: '1px solid #e0e7f0', backgroundColor: '#f8faff',
+                  display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative',
+                }}>
+                  {/* Drag handle */}
+                  <div
+                    style={{ position: 'absolute', top: 0, left: 0, width: '5px', height: '100%', cursor: 'col-resize', zIndex: 10 }}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      const startX = e.clientX;
+                      const startW = comparePanelWidth;
+                      const onMove = (mv) => {
+                        const delta = startX - mv.clientX;
+                        setComparePanelWidth(Math.min(500, Math.max(220, startW + delta)));
+                      };
+                      const onUp = () => {
+                        window.removeEventListener('mousemove', onMove);
+                        window.removeEventListener('mouseup', onUp);
+                      };
+                      window.addEventListener('mousemove', onMove);
+                      window.addEventListener('mouseup', onUp);
+                    }}
+                  />
+                  {/* 对比栏标题 */}
+                  <div style={{ padding: '10px 14px 8px', fontWeight: 600, fontSize: '13px', color: '#555', borderBottom: '1px solid #e0e7f0', flexShrink: 0 }}>
+                    其他视角
+                  </div>
+                  {/* 各方案区块 */}
+                  <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+                    {otherPlans.map(({ plan, index }) => {
+                      const thumb = planThumbnails[index];
+                      const persp = divergentPerspectives[index];
+                      const planDetails = plan.node_details ?? plan.module_details;
+                      const moduleEntries = planDetails
+                        ? (Array.isArray(planDetails)
+                            ? planDetails.map(m => [m.id || m.name || '', m])
+                            : Object.entries(planDetails))
+                        : [];
+                      // First sentence of overall_description / description
+                      const descText = plan.description || '';
+                      const firstSentence = descText.match(/^[^。！？.!?]+[。！？.!?]?/)?.[0] || descText.slice(0, 60);
+                      return (
+                        <div key={index} style={{ flex: 1, display: 'flex', flexDirection: 'column', borderBottom: '1px solid #e8edf5', minHeight: 0 }}>
+                          {/* Plan header — click to switch main canvas */}
+                          <div
+                            style={{ padding: '10px 14px 8px', backgroundColor: '#eef3ff', borderBottom: '1px solid #dde7f8', flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'flex-start', gap: '8px' }}
+                            onClick={() => {
+                              nodeDetailsSigRef.current = '';
+                              const details = plan.node_details ?? plan.module_details;
+                              if (details) setNodeDetails(details);
+                              setActivePlanIndex(index);
+                            }}
+                            title="点击切换为主画布"
+                          >
+                            <span style={{ fontSize: '12px', fontWeight: 700, padding: '2px 8px', borderRadius: '10px', backgroundColor: '#e8f0fe', color: '#1a56db', flexShrink: 0, marginTop: '2px' }}>
+                              方案{['一','二','三','四'][index] || index+1}
+                            </span>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 700, fontSize: '15px', color: '#1a2436', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {plan.perspective || `方案 ${index + 1}`}
+                              </div>
+                              {firstSentence && (
+                                <div style={{ fontSize: '12px', color: '#666', marginTop: '3px', lineHeight: 1.5 }}>{firstSentence}</div>
+                              )}
+                            </div>
+                            <span style={{ fontSize: '11px', color: '#888', flexShrink: 0, marginTop: '2px' }}>切换 ↗</span>
+                          </div>
+                          {/* Thumbnail */}
+                          {thumb && (
+                            <div style={{ padding: '6px 10px', flexShrink: 0, borderBottom: '1px solid #f0f0f0' }}>
+                              <img src={thumb} alt="方案预览" style={{ width: '100%', height: 'auto', borderRadius: '5px', border: '1px solid #e8edf5', display: 'block' }} />
+                            </div>
+                          )}
+                          {/* Module list with 引用 buttons */}
+                          <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
+                            <div style={{ padding: '6px 14px 4px', fontSize: '11px', color: '#aaa', fontWeight: 600, letterSpacing: '0.05em' }}>模块列表 · 点击引用</div>
+                            {moduleEntries.length === 0 && (
+                              <div style={{ padding: '8px 14px', color: '#bbb', fontSize: '11px' }}>暂无模块数据</div>
+                            )}
+                            {moduleEntries.map(([key, mod]) => {
+                              const modName = mod.name || key;
+                              const isQuoted = quotedModules.some(q => q.planIndex === index && q.moduleName === modName);
+                              return (
+                                <div
+                                  key={key}
+                                  style={{
+                                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                    padding: '7px 14px', gap: '8px',
+                                    backgroundColor: isQuoted ? '#eef6ff' : 'transparent',
+                                    borderLeft: isQuoted ? '3px solid #217cf3' : '3px solid transparent',
+                                    borderBottom: '1px solid #f0f4ff',
+                                  }}
+                                >
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: '13px', fontWeight: 600, color: '#2a3550', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{modName}</div>
+                                    {/* {mod.brief_description && (
+                                      <div style={{ fontSize: '11px', color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' }}>{mod.brief_description}</div>
+                                    )}                                   */}
+                                  </div>
+                                  <button
+                                    onClick={() => {
+                                      if (isQuoted) {
+                                        setQuotedModules(prev => prev.filter(q => !(q.planIndex === index && q.moduleName === modName)));
+                                      } else {
+                                        setQuotedModules(prev => [...prev, {
+                                          planIndex: index,
+                                          planName: plan.perspective || `方案 ${index + 1}`,
+                                          moduleName: modName,
+                                          moduleData: mod,
+                                        }]);
+                                      }
+                                    }}
+                                    style={{
+                                      flexShrink: 0, padding: '3px 10px', fontSize: '12px', borderRadius: '4px', cursor: 'pointer', fontWeight: 500,
+                                      backgroundColor: isQuoted ? '#217cf3' : '#fff',
+                                      color: isQuoted ? '#fff' : '#217cf3',
+                                      border: '1px solid #217cf3',
+                                    }}
+                                  >{isQuoted ? '已引用' : '引用'}</button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
             </div>
           </div>
