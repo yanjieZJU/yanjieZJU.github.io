@@ -120,11 +120,12 @@ class GenRequest(BaseModel):
     allowRandomNodes: bool = False # 是否允许生成随机节点
 
 class EditRequest(BaseModel):
-    session_id: Optional[str] = None # Added session_id
-    plan_id: Optional[str] = None # Actually represents parent_node_id now
+    session_id: Optional[str] = None
+    plan_id: Optional[str] = None
     current_plan: dict
     instruction: str
     original_query: str
+    referenced_modules: Optional[list] = None  # [{plan_name, module_name, module_data}]
 
 class ExportRequest(BaseModel):
     image: str # Base64 encoded image string
@@ -304,7 +305,8 @@ async def edit_architecture(req: EditRequest):
                 current_plan_json=req.current_plan,
                 user_instruction=req.instruction,
                 original_query=req.original_query,
-                session_id=req.session_id # Pass session_id
+                session_id=req.session_id,
+                referenced_modules=req.referenced_modules,
             ):
                 yield chunk
         except Exception as e:

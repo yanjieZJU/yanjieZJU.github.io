@@ -895,7 +895,7 @@ User-facing text: primarily Chinese; proper nouns/essential technical terms may 
 - Integrate all divergent-plan nodes meaningfully.
 
 **4. Connect the Flow**
-- Build a clear primary end-to-end flow; each module needs ONLY its MINIMUN necessary connections (no more than 2 input/output ports). 
+- Build a clear primary end-to-end flow; each module needs ONLY its MINIMUN necessary connections (NO MORE THAN 2 input/output ports). 
 - **IMPORTANT**: For the initial architecture overview, focus on the MAIN LINEAR FLOW from input to output. Minimize secondary edges (feedback loops, cross-connections, auxiliary flows) to keep the first impression simple and clear.
 - Default to module-level connections; use subnode-level only when the subnode is the true locus of computation and hiding it would obscure a key mechanism.
 - `source_mod` / `target_mod` must reference names defined in `module_details` — no phantom nodes.
@@ -938,8 +938,8 @@ Use compact string format for `ports` to save space:
             "role": "input|output|processing|data",
             "references": "exact names from Retrieved Modules or 'None'",
             "sub_nodes": [{{"name":"plain readable name in parent's domain context — no algorithm names, no paper titles","function":"≥1 sentence: 接收[具体输入]，执行[具体操作]，输出[具体结果]","technical_methods":"≥2 sentences: name technique + how it works in this domain + activation condition"}}],
-            "ports": {{
-                "incoming": ["ModA->分析结果", "ModB.SubX->控制信号"],
+            "ports": {{ // MINIMUN NECESSARY CONNECTIONS
+                "incoming": ["ModA->分析结果", "ModB.SubX->控制信号"], 
                 "outgoing": ["ModC->处理后数据", "ModA->检测到异常时"],
                 "internal_flow": ["SubA->SubB->中间结果"]
             }}
@@ -1120,7 +1120,7 @@ class EditorAgent:
         # self.model = "gpt-4o-2024-11-20"
         self.model = CHAT_MODEL
 
-    def edit_plan(self, current_plan, user_instruction, history_summary, retriever):
+    def edit_plan(self, current_plan, user_instruction, history_summary, retriever, referenced_modules=None):
         """
         Analyzes the user's instruction, retrieves necessary information, and revises the architecture.
         Maintains modification history for context.
@@ -1186,6 +1186,20 @@ class EditorAgent:
             except:
                 pass
 
+        # Build referenced modules block before f-string (avoid nested f-string syntax error)
+        if referenced_modules:
+            ref_lines = "\n".join(
+                f"- [{m.get('plan_name', 'Other Plan')}] {m.get('module_name', '')}:\n  {json.dumps(m.get('module_data', {}), ensure_ascii=False)}"
+                for m in referenced_modules
+            )
+            referenced_modules_section = f"""
+        ## Referenced Modules from Other Plans (User-Selected Context)
+        The user has explicitly referenced the following modules from alternative design plans as inspiration or comparison. When addressing the user's instruction, consider these modules — you may borrow their structure, logic, or sub-nodes where appropriate, while adapting them to fit the current architecture's naming conventions and domain context.
+        {ref_lines}
+                """
+        else:
+            referenced_modules_section = ""
+
         system_prompt = f"""
         You are an expert System Architect. You are collaborating with a user to modify a system architecture design.
         
@@ -1201,7 +1215,8 @@ class EditorAgent:
         
         ## Current Architecture
         {json.dumps(current_plan, indent=2)}
-        
+        {referenced_modules_section}
+
         ## Task
         The user has provided an instruction. You must:
         1. Analyze the instruction in context of the history (avoid repeating undone changes, or building on top of recent changes).
@@ -1227,13 +1242,13 @@ class EditorAgent:
               (b) **Parallel data channels**: name = specific domain data type (e.g., "飞行器IMU姿态数据", "环境障碍深度图像"). BAD: "RGB视频流" (no domain context).
               In both cases: no algorithm names, no paper-title phrasing, no generic nouns without domain qualification.
             - **function field**: explicitly state (1) what data/input this module receives, (2) what specific operation it performs, (3) what output it produces. Do NOT use vague phrases like "进行分析" or "实现决策" — say exactly WHAT is analyzed, WHAT decision is made.
-            - A node can represent a key information unit when that information is central to user input, system output, or human understanding of the workflow. For these nodes, their name should describe the information being captured, organized or presented. Examples: "风险提示", "进度摘要", "任务上下文"; Avoid generic names such as "信息处理", "数据展示", "内容模块"
-               - Avoid creating information-oriented nodes for every minor label, attribute, or annotation. Prefer them in the input/output nodes.
-               - Prefer function-oriented nodes for backend processing, control, analysis, and transformation.
             - Ensure the added nodes from the divergent plans are integrated meaningfully.
             - **Provide detailed descriptions for both `function` and `technical_methods` from the retrieved information BUT DO NOT FABRICATE.** You must explicitly articulate the module's specific role, core responsibilities, and crucial importance within the overall system. Explain exactly HOW the technical methods work, process data, and why they were chosen, avoiding brief or vague summaries.
-            - If there are subnodes within the modules (based on the retrieved information and relevant to the current context), they should also be defined. Explicitly map out the intermediate processes and data flow within the module using subnodes so its internal logic is transparent.
-        
+            
+        **Connections**:
+            - Build a clear primary end-to-end flow; each module needs ONLY its MINIMUN necessary connections (NO MORE THAN 2 input/output ports). 
+
+
         ## Modification Rules
         1. **Locality**: Only change what is requested.
            - In single-node mode, modify only the target module, its `sub_nodes`, and minimally required adjacent edges.
@@ -1456,12 +1471,11 @@ class EditorAgent:
 
     def _reflect(self, result, original_plan, user_instruction):
         """
-        Post-edit reflection: if the editor produced a plan_update, check whether
-        any nodes from the original plan were silently dropped without justification.
-        If so, ask the LLM to restore them while keeping the editor's changes intact.
-        Returns the (possibly corrected) result dict.
+        Post-edit reflection: check whether any nodes from the original plan were
+        silently dropped without justification. If so, restore them directly via
+        Python (no extra LLM call) unless the user instruction explicitly mentions
+        removing them.
         """
-        # Only apply to plan_update responses
         if not isinstance(result, dict) or result.get("output_type") != "plan_update":
             return result
 
@@ -1469,86 +1483,47 @@ class EditorAgent:
         if not revised_plan:
             return result
 
-        def get_module_names(plan):
+        def get_module_list(plan):
             if not isinstance(plan, dict):
-                return set()
+                return []
             md = plan.get("module_details", [])
             if isinstance(md, list):
-                return {m.get("name", "") for m in md if m.get("name")}
+                return md
             if isinstance(md, dict):
-                return set(md.keys())
-            return set()
+                return list(md.values())
+            return []
 
-        orig_names    = get_module_names(original_plan if isinstance(original_plan, dict) else {})
-        revised_names = get_module_names(revised_plan)
-        dropped       = orig_names - revised_names
+        orig_modules  = get_module_list(original_plan if isinstance(original_plan, dict) else {})
+        orig_lookup   = {m.get("name", ""): m for m in orig_modules if m.get("name")}
+        revised_list  = get_module_list(revised_plan)
+        revised_names = {m.get("name", "") for m in revised_list if m.get("name")}
+        dropped       = set(orig_lookup.keys()) - revised_names
 
         if not dropped:
             print("✅ Reflection: No nodes were silently dropped.")
             return result
 
-        print(f"⚠️  Reflection: {len(dropped)} node(s) missing from revised plan: {dropped}")
+        # Heuristic: if the user instruction explicitly names the node, treat as intentional removal
+        instr_lower = user_instruction.lower()
+        to_restore = [
+            name for name in dropped
+            if name.lower() not in instr_lower
+        ]
+        truly_dropped = dropped - set(to_restore)
 
-        # Build lookup for original module entries
-        orig_md = (original_plan if isinstance(original_plan, dict) else {}).get("module_details", [])
-        if isinstance(orig_md, list):
-            orig_lookup = {m.get("name", ""): m for m in orig_md}
-        else:
-            orig_lookup = dict(orig_md)
+        if truly_dropped:
+            print(f"✅ Reflection: {truly_dropped} appear intentionally removed (mentioned in instruction).")
 
-        prompt = f"""You are a careful architecture reviewer. An EditorAgent just modified a system architecture.
-Your job is to decide which dropped nodes should be RESTORED and which were legitimately removed.
+        if not to_restore:
+            print("✅ Reflection: All dropped nodes were legitimately removed.")
+            return result
 
-## User Instruction
-{user_instruction}
+        print(f"⚠️  Reflection: Restoring {len(to_restore)} silently dropped node(s): {to_restore}")
+        for name in to_restore:
+            revised_list.append(orig_lookup[name])
 
-## Nodes present in the original plan but MISSING from the revised plan
-{json.dumps(list(dropped), ensure_ascii=False, indent=2)}
-
-## Original definitions of those nodes
-{json.dumps({n: orig_lookup.get(n, {}) for n in dropped}, ensure_ascii=False, indent=2)}
-
-## Revised plan (editor output)
-{json.dumps(revised_plan, ensure_ascii=False, indent=2)}
-
-## Rules
-1. RESTORE a node if:
-   - The user instruction did NOT ask to remove it.
-   - It is not functionally duplicated by a new/renamed node in the revised plan.
-   - Removing it breaks connectivity or completeness of the architecture.
-2. LEAVE OUT a node if:
-   - The user explicitly asked to remove it.
-   - It is clearly superseded by a renamed or restructured node in the revised plan.
-   - It was isolated or redundant.
-
-## Output (strict JSON, no markdown)
-Return the corrected full revised plan. If you restore nodes, re-integrate their ports
-so the graph stays connected. Keep all editor changes intact.
-
-{{
-  "restored_nodes": ["list of node names you are restoring, empty list if none"],
-  "rationale": "brief explanation",
-  "revised_plan": {{ ...full corrected plan with overall_description and module_details... }}
-}}"""
-
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-            )
-            reflection_result = json.loads(response.choices[0].message.content)
-            restored = reflection_result.get("restored_nodes", [])
-            corrected_plan = reflection_result.get("revised_plan")
-            if restored:
-                print(f"✅ Reflection: Restored {restored}. Reason: {reflection_result.get('rationale', '')}")
-            else:
-                print("✅ Reflection: All dropped nodes were legitimately removed.")
-            if corrected_plan:
-                result["revised_plan"] = corrected_plan
-        except Exception as e:
-            print(f"⚠️  Reflection call failed ({e}), keeping editor output unchanged.")
-
+        revised_plan["module_details"] = revised_list
+        result["revised_plan"] = revised_plan
         return result
 
 

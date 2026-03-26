@@ -207,6 +207,8 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
                 # Attach reference details directly to module_details
                 if isinstance(module_details, list):
                     for details in module_details:
+                        if details.get("brief_description"):
+                            details["function"] = details["brief_description"]
                         mod_name = details.get("name", "Unknown")
                         if mod_name in used_ref and used_ref[mod_name]:
                             first_ref = used_ref[mod_name][0]
@@ -273,7 +275,7 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
 
     yield json.dumps({"type": "progress", "message": "所有方案生成完毕！", "percent": 100}) + "\n"
 
-def run_edit_pipeline(plan_id, current_plan_json, user_instruction, original_query, session_id=None):
+def run_edit_pipeline(plan_id, current_plan_json, user_instruction, original_query, session_id=None, referenced_modules=None):
     # Initialize agents
     integrator = IntegratorAgent(client)
     solver = ConflictSolver()
@@ -313,9 +315,9 @@ def run_edit_pipeline(plan_id, current_plan_json, user_instruction, original_que
             print(f"Warning: Could not load lineage for plan {plan_id}: {e}")
 
     yield json.dumps({"type": "progress", "message": "Analyzing and modifying...", "percent": 20}) + "\n"
-    
+
     # Call Editor Agent (One-shot with tools)
-    edit_result = editor.edit_plan(current_plan_json, user_instruction, history_summary, retriever)
+    edit_result = editor.edit_plan(current_plan_json, user_instruction, history_summary, retriever, referenced_modules=referenced_modules)
     
     # Handle cases where edit_result might not be a dictionary (e.g., if JSON decoding failed inside editor)
     if not isinstance(edit_result, dict):
@@ -392,10 +394,14 @@ def run_edit_pipeline(plan_id, current_plan_json, user_instruction, original_que
             # Attach basic reference info if missing (Frontend might expect it)
             if isinstance(module_details, list):
                 for details in module_details:
+                    if details.get("brief_description"):
+                        details["function"] = details["brief_description"]
                     if "reference" not in details:
                         details["reference"] = None
             else:
                 for mod_name, details in module_details.items():
+                    if details.get("brief_description"):
+                        details["function"] = details["brief_description"]
                     if "reference" not in details:
                         details["reference"] = None
             
