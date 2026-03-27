@@ -1,15 +1,15 @@
 import os
 
 # === OpenAI Configuration ===
-os.environ["OPENAI_API_KEY"] = "sk-y44HwiOqlzdvdMwiVGmyzpITjGQdkwWS0bJuDMWN2awpHnX7" 
-os.environ["OPENAI_BASE_URL"] = "https://poloai.top/v1"
+os.environ["OPENAI_API_KEY"] = "YOUR API KEY" 
+os.environ["OPENAI_BASE_URL"] = "BASE URL"
 
-os.environ["DASHSCOPE_API_KEY"] = "sk-8d86e8ae17e04f6aacff4a43cfae481a"
+os.environ["DASHSCOPE_API_KEY"] = ""
 
 # === Neo4j Configuration ===
-NEO4J_USERNAME = "neo4j"
-NEO4J_PASSWORD = "BQLjYc4gOpIxTi6o5c-es481vKejEHHBGuxJeEvX9hg"
-NEO4J_URL = "neo4j+s://8891a7fc.databases.neo4j.io"
+NEO4J_USERNAME = ""
+NEO4J_PASSWORD = ""
+NEO4J_URL = ""
 
 # === API KEY TEST ===
 if __name__ == "__main__":
