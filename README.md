@@ -12,7 +12,7 @@
   - **模块说明 (Brief Description)** 等重要结构化设计参考。
   
 ### 2. 交互式对话编辑与演进 (Agentic Editing)
-- **对话修改架构**：对当前生成的方案细节不满意？在左侧聊天栏直接输入修改指令（如“添加一个 Redis 缓存中心”或“将数据存储改为 MySQL”），AI 会基于当前所选方案进行局部逻辑更新，并生成一条新的方案分支。
+- **对话修改架构**：对当前生成的方案细节不满意？在左侧聊天栏直接输入修改指令（如“添加一个 Redis 缓存中心”或“将数据存储改为 MySQL”），Agent 会基于当前所选方案进行局部逻辑更新，并生成一条新的方案分支。
 - **无缝回溯**：所有用户的修改指令和系统的更新结果均会产生完整的对话历史演进记录，方便您回顾过程和版本对比。
 
 ### 3. 直观的可视化工作区
@@ -25,9 +25,13 @@
 
 ## 🛠️ 技术栈 (Tech Stack)
 
-- **前端 (Client)**：React, Vite, React Flow, Mermaid.js
+- **前端 (Client)**：React, Vite, Antv x6
 - **后端 (Server)**：Python, FastAPI, Pydantic, python-docx
 - **AI 与核心引擎**: 基于 OpenAI API 的底层多智能体协同管线 (Planner, Integrator, Editor, Reviewer 等)。
+
+## 快速体验
+
+http://106.14.161.104/
 
 ## 🚀 快速上手 (Getting Started)
 
@@ -39,7 +43,7 @@
 
 1. **获取代码**
    ```bash
-   git clone https://github.com/mistymoonight/DiaMaid.git
+   git clone https://github.com/yanjieZJU/DiaMaid.git
    cd DiaMaid
    ```
 
