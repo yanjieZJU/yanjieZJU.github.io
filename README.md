@@ -29,11 +29,11 @@
 - **后端 (Server)**：Python, FastAPI, Pydantic, python-docx
 - **AI 与核心引擎**: 基于 OpenAI API 的底层多智能体协同管线 (Planner, Integrator, Editor, Reviewer 等)。
 
-## 快速体验
+## 🚀 快速体验
 
-http://106.14.161.104/
+访问网址：http://106.14.161.104/
 
-## 🚀 快速上手 (Getting Started)
+##  快速上手 (Getting Started)
 
 ### 前置要求 (Prerequisites)
 - [Node.js](https://nodejs.org/) (建议 v18 及以上)
