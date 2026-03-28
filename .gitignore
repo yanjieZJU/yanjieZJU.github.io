@@ -37,3 +37,6 @@ data/
 server/data/
 server/graph_storage/
 server/rag_storage/
+
+eval_models.py
+*.html

@@ -370,7 +370,7 @@ function parseNodeDetails(nodeDetails, options = {}) {
       const role = mod.role || '';
       const lane = getRoleLane(role);
       const importance = parseImportance(mod.importance ?? mod.priority ?? mod.criticality ?? mod.weight);
-      const isCollapsed = collapsedMap.get(modName) ?? true; // Default to collapsed
+      const isCollapsed = collapsedMap.get(modName) ?? false; // Default to expanded
       nodes.push({
         id: modName,
         label: mod.name || modName,
@@ -431,7 +431,7 @@ function parseNodeDetails(nodeDetails, options = {}) {
       if (!tgt || tgt === 'null' || tgt === 'None') tgt = e.target_mod;
 
       // If this module is collapsed, only show module-level edges (skip internal_flow edges)
-      const isCollapsed = collapsedMap.get(modName) ?? true;
+      const isCollapsed = collapsedMap.get(modName) ?? false;
       const isInternalEdge = (e.originates_from_internal_node && e.originates_from_internal_node !== modName);
       if (isCollapsed && isInternalEdge) return;
 
@@ -439,7 +439,7 @@ function parseNodeDetails(nodeDetails, options = {}) {
     });
 
     // Skip internal_flow edges when this module is collapsed
-    const isCollapsed = collapsedMap.get(modName) ?? true;
+    const isCollapsed = collapsedMap.get(modName) ?? false;
     if (!isCollapsed) {
       mod.ports?.internal_flow?.forEach((e, i) => {
         const src = e.source_node, tgt = e.target_node;
@@ -1416,8 +1416,16 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
         const graph = graphRef.current;
         if (!graph) return reject(new Error('Graph not ready'));
         try {
-          const ratio = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
-          graph.toPNG((dataUri) => resolve(dataUri), { padding: 20, backgroundColor: '#ffffff', ratio });
+          graph.zoomToFit({ padding: 40, maxScale: 1 });
+          setTimeout(() => {
+            const ratio = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
+            graph.toPNG((dataUri) => resolve(dataUri), {
+              padding: 40,
+              backgroundColor: '#ffffff',
+              ratio,
+              copyStyles: true
+            });
+          }, 100);
         } catch (e) { reject(e); }
       }),
   }));
@@ -1460,13 +1468,13 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
       if (hasDetails) {
         isRenderingRef.current = true;
         try {
-          // Initialize collapsedModules with all modules collapsed
+          // Initialize collapsedModules with all modules expanded
           const initialCollapsed = new Map();
           const modules = Array.isArray(detailsToRender) ? detailsToRender : Object.values(detailsToRender);
           modules.forEach(m => {
             if (m && (m.id || m.name)) {
               const key = m.id || m.name;
-              initialCollapsed.set(key, true);
+              initialCollapsed.set(key, false);
             }
           });
           setCollapsedModules(initialCollapsed);

@@ -451,18 +451,20 @@ class PlannerAgent:
         - Final JSON text fields should be primarily in Chinese for user-facing readability.
         - Proper nouns, model names, protocol names, and indispensable technical terms may remain in English.
         
-        ## Reference Material (Knowledge Injection)
-        We have retrieved knowledge from different domain clusters to inspire you.
-        Please strictly follow the mapping below to generate your plans:
+        ## Reference Material (Inspiration Only — Not a Template)
+        We have retrieved knowledge from adjacent domains to spark divergent thinking.
+        **Do NOT copy or directly map these references into your plan.** Instead, extract the *underlying mechanism or design principle* and re-express it in the user's specific scenario.
+        Ask yourself: "What functional problem does this reference solve, and how can I solve the analogous problem in the user's context?"
+        If a reference feels irrelevant or forces an unnatural fit, **ignore it** and rely on domain reasoning instead.
         
         {reference_context_str}
         
         ## Requirements by Plan
 
         **Plan 1 (Deep Optimization)**:
-        - Use **Source 1** (Near-Field) as your inspiration.
-        - If Source 1 states "No papers highly relevant", **do NOT introduce external perspectives or unrelated domains**. Instead, focus strictly on the user's own scenario: deeply analyze the Base Anchors and the user's requirements to propose functional enhancements that are a **natural, direct extension** of the existing system. All additional_anchors must directly serve the user's stated goal.
-        - Focus on discovering **innovative and feasible functional embeddings** and deep professional details missing from the Base Anchors. Focus on the most advanced or unique technical methods in the community summaries, rather than conventional ones.
+        - Use **Source 1** (Near-Field) as inspiration. Extract the *core design principle* from the community summaries — do not port technology names or module structures wholesale.
+        - If Source 1 states "No papers highly relevant", focus strictly on the user's own scenario: deeply analyze the Base Anchors and the user's requirements to propose functional enhancements that are a **natural, direct extension** of the existing system.
+        - Prioritize **feasibility and scenario fit** over novelty. All additional_anchors must directly serve the user's stated goal.
 
         **Plan 2 (Cross-Domain Inspiration)** (If requested):
         - Use **Source 2** (Far-Field) as your inspiration. Clearly define the core mechanism and advantages of this analogy, and ensure that it significantly differs from other plans.
@@ -502,7 +504,7 @@ class PlannerAgent:
             "plans": [
                 {{
                     "perspective": "use one short phrase to describe the perspective, highlighting the key functions or biggest advantages and innovations of this design (e.g., 'Immersive interactive feedback'). Do not just copy the perspective title or vague terms like 'cross-domain'",
-                    "rationale": "Explain explicitly: 'Inspired by [Source Name], we introduced [Feature] to achieve [Goal]...' Ground it in the user's specific scenario.",
+                    "rationale": "Explain explicitly: 'Inspired by [Source Name: Feature], we introduced [Function] to achieve [Goal]...' Ground it in the user's specific scenario.",
                     "additional_anchors": [
                         {{
                             "user_term": "Scenario-specific module name (e.g., '果实成熟度识别' not '目标识别')",
@@ -823,6 +825,10 @@ class IntegratorAgent:
                 
                 2. **Conflict Handling**:
                 - If an Extension Module conflicts with a User Module (e.g., "Standard Camera" vs. "Specialized Eye-Tracker"), **Prioritize the User's explicit choice**, but consider using the Extension Module as an *alternative input* or *enhancement*.
+
+                3. **Connection Discipline**:
+                - Connect extension modules only where there is a **direct data dependency** — do NOT add connections simply because two modules are "related" or "could benefit from each other".
+                - Each extension module should have at most 2 incoming/outgoing connections to the main pipeline.
                 """
         else:
              # Fallback if old call signature is used or no plan
@@ -895,8 +901,9 @@ User-facing text: primarily Chinese; proper nouns/essential technical terms may 
 - Integrate all divergent-plan nodes meaningfully.
 
 **4. Connect the Flow**
-- Build a clear primary end-to-end flow; each module needs ONLY its MINIMUN necessary connections (NO MORE THAN 2 input/output ports). 
-- **IMPORTANT**: For the initial architecture overview, focus on the MAIN LINEAR FLOW from input to output. Minimize secondary edges (feedback loops, cross-connections, auxiliary flows) to keep the first impression simple and clear.
+- Build a clear end-to-end flow. Each module needs ONLY its MINIMUN necessary connections. Do NOT add links indicating "related", "benificial", or "contextal linked".
+- **Hard limit**: each module may have at most **2 outgoing** and **2 incoming** ports total. If you exceed this, remove the weakest edge.
+- **Feedback / cross-connections**: allow at most **1** feedback loop in the entire diagram, and only when it represents a concrete control signal (e.g., error correction, adaptive calibration). Omit all other secondary edges.
 - Default to module-level connections; use subnode-level only when the subnode is the true locus of computation and hiding it would obscure a key mechanism.
 - `source_mod` / `target_mod` must reference names defined in `module_details` — no phantom nodes.
 - Merge parallel edges between the same pair of nodes. Preserve literature-validated flow order where applicable.
@@ -980,11 +987,17 @@ Use compact string format for `ports` to save space:
                     response = None
             else:
                 return None
-        try:
-            print(response)
-        except json.JSONDecodeError:
-            print("Failed to parse JSON response.")
+        if not response:
             return None
+        # Strip // inline comments that LLMs sometimes insert (causes json.loads to fail)
+        import re as _re
+        response = _re.sub(r'//[^\n"]*', '', response)
+        try:
+            json.loads(response)  # validate before returning
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse JSON response: {e}")
+            return None
+        print(response)
         return _expand_compact_ports(response)
 
     def refine_arch(self, original_query, current_arch, error_report):
@@ -1045,7 +1058,7 @@ Use compact string format for `ports` to save space:
         Returns: 
             dict: { "used": { "Module": [evidence] }, "explorable": [evidence] }
         """
-        if not arch_plan or "module_details" not in arch_plan:
+        if not arch_plan or not isinstance(arch_plan, dict) or "module_details" not in arch_plan:
              return {"used": {}, "explorable": []}
 
         # 1. Extract Used Reference Names from Plan
@@ -1186,6 +1199,22 @@ class EditorAgent:
             except:
                 pass
 
+        # Slim down the plan for the editor prompt: drop heavy fields not needed for decision-making
+        def _slim_plan(plan):
+            if not isinstance(plan, dict):
+                return plan
+            slim = {k: v for k, v in plan.items() if k != "module_details"}
+            mds = plan.get("module_details", [])
+            if isinstance(mds, dict):
+                mds = list(mds.values())
+            slim_mds = []
+            for m in mds:
+                slim_mds.append({k: m[k] for k in ["name", "brief_description", "role", "ports", "sub_nodes"] if k in m})
+            slim["module_details"] = slim_mds
+            return slim
+
+        slim_plan = _slim_plan(current_plan)
+
         # Build referenced modules block before f-string (avoid nested f-string syntax error)
         if referenced_modules:
             ref_lines = "\n".join(
@@ -1214,7 +1243,7 @@ class EditorAgent:
         {history_text}
         
         ## Current Architecture
-        {json.dumps(current_plan, indent=2)}
+        {json.dumps(slim_plan, ensure_ascii=False)}
         {referenced_modules_section}
 
         ## Task
@@ -1246,7 +1275,8 @@ class EditorAgent:
             - **Provide detailed descriptions for both `function` and `technical_methods` from the retrieved information BUT DO NOT FABRICATE.** You must explicitly articulate the module's specific role, core responsibilities, and crucial importance within the overall system. Explain exactly HOW the technical methods work, process data, and why they were chosen, avoiding brief or vague summaries.
             
         **Connections**:
-            - Build a clear primary end-to-end flow; each module needs ONLY its MINIMUN necessary connections (NO MORE THAN 2 input/output ports). 
+            - Build a clear primary end-to-end flow with MINIMUN NECESSARY connections.
+            - Hard limit: at most **2 outgoing** and **2 incoming** ports per module. At most **1** feedback loop in the entire diagram.
 
 
         ## Modification Rules
@@ -1268,22 +1298,23 @@ class EditorAgent:
                 "overall_description": "The overall description of the ENTIRE revised system architecture. Update the original description to reflect your changes, but DO NOT just write your modification intent here.",
                 "module_details": [
                     {{
-                        "name": "ModuleNameA",
+                        "name": "NewOrModifiedModuleA",
+                        "change_type": "added | modified",
                         "brief_description": "...",
                         "function": "Detailed explanation of the module's function, its core responsibilities, and its crucial role and importance within the overall system architecture.",
-                        "technical_methods": "Detailed description of the specific algorithms, models, or technical methods used, including HOW they process data and why they are selected. You MUST abstract away the original paper context. ",
+                        "technical_methods": "Detailed description of the specific algorithms, models, or technical methods used, including HOW they process data and why they are selected. You MUST abstract away the original paper context.",
                         "role": "choose from ['input', 'output', 'processing', 'data']",
                         "sub_nodes": [],
                         "ports": {{}}
                     }},
                     {{
-                        "name": "ModuleNameB",
-                        "brief_description": "...",
-                        "function": "...",
-                        "technical_methods": "...",
-                        "role": "...",
-                        "sub_nodes": [],
+                        "name": "ExistingModuleWhosePortsChanged",
+                        "change_type": "ports_only",
                         "ports": {{}}
+                    }},
+                    {{
+                        "name": "UnchangedModuleC",
+                        "change_type": "unchanged"
                     }}
                 ]
             }}
@@ -1303,11 +1334,15 @@ class EditorAgent:
                 ]
             }}
         }}
-        
-        **CRITICAL REQUIREMENT:** 
+
+        **CRITICAL REQUIREMENT:**
         1. `overall_description` MUST describe the full, comprehensive system workflow after your changes.
-        2. `module_details` MUST be a LIST containing the FULL, COMPLETE architecture with ALL nodes (both modified and unmodified) as objects. Do NOT only output the changed nodes. Failure to output unmodified nodes will break the system.
-        3. For non-plan_update modes, do NOT output revised_plan and do NOT alter the plan.
+        2. `module_details` MUST be a LIST containing ALL nodes using the diff format above:
+           - Newly added or content-modified nodes: include ALL fields with `"change_type": "added"` or `"change_type": "modified"`.
+           - Nodes whose only change is connection rewiring: include ONLY `name`, `"change_type": "ports_only"`, and the new `ports` object.
+           - Completely unmodified nodes: include ONLY `name` and `"change_type": "unchanged"`. Do NOT omit them.
+        3. When adding a new module that connects to existing modules, you MUST also output `ports_only` entries for those existing modules to reflect the new connections.
+        4. For non-plan_update modes, do NOT output revised_plan and do NOT alter the plan.
         """
 
         messages = [{"role": "system", "content": system_prompt}]
@@ -1471,10 +1506,11 @@ class EditorAgent:
 
     def _reflect(self, result, original_plan, user_instruction):
         """
-        Post-edit reflection: check whether any nodes from the original plan were
-        silently dropped without justification. If so, restore them directly via
-        Python (no extra LLM call) unless the user instruction explicitly mentions
-        removing them.
+        Post-edit reflection: merge diff output back into the full plan.
+        Nodes with change_type='unchanged' are restored from original_plan.
+        Nodes with change_type='ports_only' get only their ports updated.
+        Nodes with change_type='added'/'modified' are taken as-is.
+        Also checks for silently dropped nodes (missing change_type entirely).
         """
         if not isinstance(result, dict) or result.get("output_type") != "plan_update":
             return result
@@ -1493,9 +1529,58 @@ class EditorAgent:
                 return list(md.values())
             return []
 
-        orig_modules  = get_module_list(original_plan if isinstance(original_plan, dict) else {})
-        orig_lookup   = {m.get("name", ""): m for m in orig_modules if m.get("name")}
-        revised_list  = get_module_list(revised_plan)
+        orig_modules = get_module_list(original_plan if isinstance(original_plan, dict) else {})
+        orig_lookup  = {m.get("name", ""): m for m in orig_modules if m.get("name")}
+        diff_list    = get_module_list(revised_plan)
+
+        # Check if diff format is being used (any entry has change_type)
+        uses_diff = any("change_type" in m for m in diff_list if isinstance(m, dict))
+
+        if uses_diff:
+            merged = []
+            diff_names = set()
+            for entry in diff_list:
+                if not isinstance(entry, dict):
+                    continue
+                name = entry.get("name", "")
+                if not name:
+                    continue
+                diff_names.add(name)
+                ct = entry.get("change_type", "modified")
+
+                if ct == "unchanged":
+                    # Restore full node from original
+                    if name in orig_lookup:
+                        merged.append(orig_lookup[name])
+                    else:
+                        print(f"⚠️  Reflection: unchanged node '{name}' not found in original, skipping.")
+                elif ct == "ports_only":
+                    # Take original node but overwrite ports
+                    if name in orig_lookup:
+                        restored = dict(orig_lookup[name])
+                        restored["ports"] = entry.get("ports", restored.get("ports", {}))
+                        merged.append(restored)
+                    else:
+                        # New node with only ports? Keep as-is (shouldn't happen)
+                        merged.append(entry)
+                else:
+                    # added or modified: use as-is
+                    merged.append(entry)
+
+            # Restore any nodes completely missing from diff (silently dropped)
+            instr_lower = user_instruction.lower()
+            for name, orig_node in orig_lookup.items():
+                if name not in diff_names and name.lower() not in instr_lower:
+                    print(f"⚠️  Reflection: silently dropped node '{name}', restoring.")
+                    merged.append(orig_node)
+
+            revised_plan["module_details"] = merged
+            result["revised_plan"] = revised_plan
+            print(f"✅ Reflection (diff mode): merged {len(merged)} nodes total.")
+            return result
+
+        # Legacy full-output mode: check for silently dropped nodes
+        revised_list  = diff_list
         revised_names = {m.get("name", "") for m in revised_list if m.get("name")}
         dropped       = set(orig_lookup.keys()) - revised_names
 
@@ -1503,12 +1588,8 @@ class EditorAgent:
             print("✅ Reflection: No nodes were silently dropped.")
             return result
 
-        # Heuristic: if the user instruction explicitly names the node, treat as intentional removal
         instr_lower = user_instruction.lower()
-        to_restore = [
-            name for name in dropped
-            if name.lower() not in instr_lower
-        ]
+        to_restore = [name for name in dropped if name.lower() not in instr_lower]
         truly_dropped = dropped - set(to_restore)
 
         if truly_dropped:
@@ -1689,6 +1770,14 @@ class ConflictSolver:
             return json.dumps(arch_json_str if isinstance(arch_json_str, dict) else {})
 
         print("🕵️ ConflictSolver: Resolving topology...")
+
+        # Clean malformed sub_nodes (remove 'ports' field if present)
+        for m_info in module_details.values():
+            sub_nodes = m_info.get("sub_nodes", [])
+            for sub in sub_nodes:
+                if "ports" in sub:
+                    del sub["ports"]
+                    print(f"  Cleaned invalid 'ports' field from sub_node '{sub.get('name')}'")
 
         valid_mod_ids = set(module_details.keys())
         sub_id_map = {m_id: self._sub_ids(m_info) for m_id, m_info in module_details.items()}

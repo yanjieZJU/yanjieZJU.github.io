@@ -166,28 +166,24 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
             base_anchors=base_anchors
         )
         
-        # === SELF-CORRECTION LOOP ===
-        yield json.dumps({"type": "progress", "message": f"Detecting and resolving conflicts for option {i+1}...", "percent": int(base_percent + 15)}) + "\n"
-        max_retries = 2
-        for attempt in range(max_retries + 1):
-            if not current_arch_json: break
-            
+        # === SINGLE-PASS VALIDATION ===
+        yield json.dumps({"type": "progress", "message": f"Validating option {i+1}...", "percent": int(base_percent + 15)}) + "\n"
+
+        is_valid, report = solver.detect_conflicts(current_arch_json)
+        if not is_valid:
+            print(f"⚠️ Conflicts detected (Attempt 0):\n{report}")
+            # Single LLM refinement attempt
+            current_arch_json = integrator.refine_arch(full_query, current_arch_json, report)
             is_valid, report = solver.detect_conflicts(current_arch_json)
             if is_valid:
-                print(f"✅ Architecture passed integrity check (Attempt {attempt}).")
-                break
+                print(f"✅ Architecture passed after refinement.")
             else:
-                print(f"⚠️ Conflict detected (Attempt {attempt}):\n{report}")
-                if attempt < max_retries:
-                    # Request Fix
-                    current_arch_json = integrator.refine_arch(full_query, current_arch_json, report)
-                else:
-                    print("❌ Max retries reached. Proceeding with best-effort cleanup.")
+                print(f"⚠️ Still has conflicts, will apply automatic cleanup.")
+        else:
+            print(f"✅ Architecture passed integrity check.")
 
-        
         if current_arch_json:
-            # === FINAL SAFEGUARD ===
-            # Resolve leftover conflicts (hard cleanup) before drawing
+            # Apply automatic cleanup for any remaining issues
             validated_arch_json_str = solver.resolve(current_arch_json)
             
             # Skip mermaid generation to save extreme time since frontend natively renders the JSON now
@@ -195,7 +191,9 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
             
             # Add perspective info to description
             try:
-                arch_json = json.loads(validated_arch_json_str)
+                arch_json = json.loads(validated_arch_json_str) if isinstance(validated_arch_json_str, str) else validated_arch_json_str
+                if not isinstance(arch_json, dict):
+                    raise ValueError(f"Expected dict from arch JSON, got {type(arch_json)}")
                 module_details = arch_json.get("module_details", {})
                 raw_desc = arch_json.get("overall_description", "")
                 
@@ -353,25 +351,13 @@ def run_edit_pipeline(plan_id, current_plan_json, user_instruction, original_que
 
     print(f"✅ Editor Intent: {modification_intent}")
 
-    # 2. Conflict Check & Refine Loop — only for plan_update
+    # 2. Quick validation (skip slow LLM refinement loop)
     current_arch_json = modified_arch_json
-
-    max_retries = 3
+    yield json.dumps({"type": "progress", "message": "Validating architecture...", "percent": 60}) + "\n"
 
     is_valid, report = solver.detect_conflicts(current_arch_json)
     if not is_valid:
-        for attempt in range(max_retries):
-            if not current_arch_json: break
-            print(f"⚠️ Conflict detected in modified arch:\n{report}")
-            yield json.dumps({"type": "progress", "message": f"Verifying integrity (Attempt {attempt+1})...", "percent": 50 + (attempt * 10)}) + "\n"
-            arch_str = json.dumps(current_arch_json, indent=2) if isinstance(current_arch_json, dict) else current_arch_json
-            current_arch_json = integrator.refine_arch(original_query, arch_str, report)
-            is_valid, report = solver.detect_conflicts(current_arch_json)
-            if is_valid:
-                print(f"✅ Modified architecture passed integrity check.")
-                break
-        else:
-            print("❌ Max retries reached for modification.")
+        print(f"⚠️ Conflicts detected, will apply automatic cleanup:\n{report}")
     else:
         print(f"✅ Modified architecture passed integrity check.")
 
@@ -394,12 +380,15 @@ def run_edit_pipeline(plan_id, current_plan_json, user_instruction, original_que
             # Attach basic reference info if missing (Frontend might expect it)
             if isinstance(module_details, list):
                 for details in module_details:
+                    # Strip internal diff marker before sending to frontend
+                    details.pop("change_type", None)
                     if details.get("brief_description"):
                         details["function"] = details["brief_description"]
                     if "reference" not in details:
                         details["reference"] = None
             else:
                 for mod_name, details in module_details.items():
+                    details.pop("change_type", None)
                     if details.get("brief_description"):
                         details["function"] = details["brief_description"]
                     if "reference" not in details:
