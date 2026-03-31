@@ -1416,16 +1416,15 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
         const graph = graphRef.current;
         if (!graph) return reject(new Error('Graph not ready'));
         try {
-          graph.zoomToFit({ padding: 40, maxScale: 1 });
+          graph.zoomToFit({ padding: 60, maxScale: 1 });
           setTimeout(() => {
-            const ratio = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
             graph.toPNG((dataUri) => resolve(dataUri), {
-              padding: 40,
+              padding: 60,
               backgroundColor: '#ffffff',
-              ratio,
+              ratio: 4,
               copyStyles: true
             });
-          }, 100);
+          }, 300);
         } catch (e) { reject(e); }
       }),
   }));

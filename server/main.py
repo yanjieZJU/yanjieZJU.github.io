@@ -131,6 +131,7 @@ class ExportRequest(BaseModel):
     image: str # Base64 encoded image string
     plan: Union[dict, list] # Module details json
     overall_description: Optional[str] = None
+    plan_id: Optional[str] = None
 
 class SaveRequest(BaseModel):
     session_id: Optional[str] = None
@@ -363,7 +364,7 @@ async def revert_to_parent(session_id: Optional[str] = Query(None), plan_id: Opt
 async def export_document(req: ExportRequest):
     print("Received request to export docx.")
     try:
-        doc_stream = export_to_docx(image_b64=req.image, node_details=req.plan)
+        doc_stream = export_to_docx(image_b64=req.image, node_details=req.plan, overall_description=req.overall_description, plan_id=req.plan_id)
         headers = {
             'Content-Disposition': 'attachment; filename="architecture_plan.docx"'
         }

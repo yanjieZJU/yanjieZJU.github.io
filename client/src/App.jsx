@@ -992,7 +992,8 @@ function App() {
         body: JSON.stringify({
           image: dataUrl,
           plan: nodeDetails,
-          overall_description: currentPlan.description || ''
+          overall_description: currentPlan.description || '',
+          plan_id: currentPlan.plan_id || ''
         })
       });
 
@@ -1474,6 +1475,7 @@ function App() {
                           display: 'flex',
                           flexDirection: 'column',
                           overflow: 'hidden',
+                          flexShrink: 0,
                           cursor: completedPlan ? 'pointer' : 'default',
                           boxShadow: completedPlan ? '0 2px 12px rgba(33,124,243,0.10)' : '0 1px 4px rgba(0,0,0,0.05)',
                           transition: 'box-shadow 0.15s, border-color 0.15s, transform 0.15s',
@@ -1514,7 +1516,7 @@ function App() {
                         {/* Thumbnail */}
                         {thumb && (
                           <div style={{ padding: '0 18px 10px' }}>
-                            <img src={thumb} alt="方案预览" style={{ width: '100%', height: 'auto', borderRadius: '6px', border: '1px solid #e8edf5', display: 'block' }} />
+                            <img src={thumb} alt="方案预览" style={{ width: '100%', maxHeight: '180px', objectFit: 'contain', borderRadius: '6px', border: '1px solid #e8edf5', display: 'block' }} />
                           </div>
                         )}
                         {/* Progress / CTA */}
@@ -1768,7 +1770,7 @@ function App() {
                       const descText = plan.description || '';
                       const firstSentence = descText.match(/^[^。！？.!?]+[。！？.!?]?/)?.[0] || descText.slice(0, 60);
                       return (
-                        <div key={index} style={{ flex: 1, display: 'flex', flexDirection: 'column', borderBottom: '1px solid #e8edf5', minHeight: 0 }}>
+                        <div key={index} style={{ display: 'flex', flexDirection: 'column', borderBottom: '1px solid #e8edf5', flexShrink: 0 }}>
                           {/* Plan header — click to switch main canvas */}
                           <div
                             style={{ padding: '10px 14px 8px', backgroundColor: '#eef3ff', borderBottom: '1px solid #dde7f8', flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'flex-start', gap: '8px' }}
@@ -1796,11 +1798,11 @@ function App() {
                           {/* Thumbnail */}
                           {thumb && (
                             <div style={{ padding: '6px 10px', flexShrink: 0, borderBottom: '1px solid #f0f0f0' }}>
-                              <img src={thumb} alt="方案预览" style={{ width: '100%', height: 'auto', borderRadius: '5px', border: '1px solid #e8edf5', display: 'block' }} />
+                              <img src={thumb} alt="方案预览" style={{ width: '100%', maxHeight: '120px', objectFit: 'contain', borderRadius: '5px', border: '1px solid #e8edf5', display: 'block' }} />
                             </div>
                           )}
                           {/* Module list with 引用 buttons */}
-                          <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
+                          <div style={{ maxHeight: '240px', overflowY: 'auto', padding: '4px 0' }}>
                             <div style={{ padding: '6px 14px 4px', fontSize: '11px', color: '#aaa', fontWeight: 600, letterSpacing: '0.05em' }}>模块列表 · 点击引用</div>
                             {moduleEntries.length === 0 && (
                               <div style={{ padding: '8px 14px', color: '#bbb', fontSize: '11px' }}>暂无模块数据</div>
