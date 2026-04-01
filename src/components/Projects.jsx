@@ -32,6 +32,15 @@ const projects = [
     linkLabel: 'GitHub →',
   },
   {
+    period: '2025.12 — 至今',
+    title: 'DiaMaid：系统设计架构图智能助手',
+    role: '项目负责人',
+    desc: '面向研究者与开发者的AI驱动系统架构图生成工具，输入自然语言描述即可生成多视角专业架构方案。结合LLM与Multi-Agent协作，支持对话式编辑、可视化工作区与Word报告导出。',
+    tags: ['Multi-Agent', 'LLM', 'React', 'FastAPI', 'React Flow', 'Mermaid.js'],
+    link: 'https://github.com/yanjieZJU/DiaMaid_public',
+    linkLabel: '查看 GitHub →',
+  },
+  {
     period: '2022.10 — 2023.01',
     title: '星世线小程序增长与体验优化',
     role: '项目负责人',
