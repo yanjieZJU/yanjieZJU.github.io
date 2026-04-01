@@ -1,0 +1,24 @@
+.section {
+  padding: 96px 24px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.section-alt {
+  background: var(--color-bg-alt);
+}
+
+.section-alt .section {
+  /* inner container inside alt-bg wrapper */
+}
+
+.section-title {
+  font-size: clamp(28px, 5vw, 40px);
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  margin-bottom: 48px;
+  background: var(--gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}

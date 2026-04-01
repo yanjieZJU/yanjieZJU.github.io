@@ -1,0 +1,45 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --color-bg: #ffffff;
+  --color-bg-alt: #f5f5f7;
+  --color-text: #1d1d1f;
+  --color-text-secondary: #6e6e73;
+  --color-accent-start: #667eea;
+  --color-accent-end: #a78bfa;
+  --gradient: linear-gradient(135deg, var(--color-accent-start), var(--color-accent-end));
+  --gradient-bg: linear-gradient(135deg, #f0f4ff 0%, #ffffff 50%, #f5f0ff 100%);
+  --font: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+  --radius: 16px;
+  --shadow: 0 4px 24px rgba(102, 126, 234, 0.12);
+  --shadow-hover: 0 12px 40px rgba(102, 126, 234, 0.22);
+  --nav-height: 56px;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font);
+  color: var(--color-text);
+  background: var(--color-bg);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scroll animation base states */
+.fade-up {
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+
+.fade-up.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
