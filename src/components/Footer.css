@@ -1,14 +1,15 @@
 .footer {
   background: var(--color-bg-alt);
-  border-top: 1px solid rgba(102, 126, 234, 0.1);
-  padding: 40px 24px;
+  border-top: 1px solid var(--color-border);
+  padding: 32px 24px;
   text-align: center;
+  font-family: var(--font-sans);
+  font-size: 12px;
   color: var(--color-text-secondary);
-  font-size: 13px;
 }
 
 .footer a {
-  color: var(--color-accent-start);
+  color: var(--color-accent);
   text-decoration: none;
 }
 

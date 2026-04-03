@@ -1,14 +1,17 @@
-// src/components/Footer.jsx
+import profile from '../../content/profile.js'
 import './Footer.css'
 
 export default function Footer() {
   return (
     <footer className="footer">
       <p>
-        © 2026 Yanjie ·
-        <a href="https://github.com/yanjieZJU" target="_blank" rel="noreferrer"> GitHub</a>
-        {' · '}
-        <a href="mailto:yanjie02@zju.edu.cn">yanjie02@zju.edu.cn</a>
+        © 2026 {profile.nameZh} · {profile.nameEn}
+        {profile.github && (
+          <>{' · '}<a href={profile.github} target="_blank" rel="noreferrer">GitHub</a></>
+        )}
+        {profile.email && (
+          <>{' · '}<a href={`mailto:${profile.email}`}>{profile.email}</a></>
+        )}
       </p>
     </footer>
   )
