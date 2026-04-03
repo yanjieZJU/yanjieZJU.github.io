@@ -1,6 +1,6 @@
 .section {
-  padding: 96px 24px;
-  max-width: 1000px;
+  padding: 80px 24px;
+  max-width: 900px;
   margin: 0 auto;
 }
 
@@ -8,17 +8,14 @@
   background: var(--color-bg-alt);
 }
 
-.section-alt .section {
-  /* inner container inside alt-bg wrapper */
-}
-
-.section-title {
-  font-size: clamp(28px, 5vw, 40px);
+.section-heading {
+  font-family: var(--font-sans);
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: -0.5px;
-  margin-bottom: 48px;
-  background: var(--gradient);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  border-bottom: 1px solid var(--color-accent);
+  padding-bottom: 6px;
+  margin-bottom: 40px;
 }
