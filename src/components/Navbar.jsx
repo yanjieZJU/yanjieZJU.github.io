@@ -1,11 +1,11 @@
-// src/components/Navbar.jsx
 import { useEffect, useState } from 'react'
 import './Navbar.css'
 
 const links = [
-  { label: '教育经历', href: '#education' },
-  { label: '项目经历', href: '#projects' },
-  { label: '个人技能', href: '#skills' },
+  { label: 'About', href: '#top' },
+  { label: 'Education', href: '#education' },
+  { label: 'Works', href: '#projects' },
+  { label: 'Skills', href: '#skills' },
 ]
 
 export default function Navbar() {
@@ -19,7 +19,7 @@ export default function Navbar() {
 
   return (
     <nav className={`navbar${scrolled ? ' scrolled' : ''}`}>
-      <a className="navbar-logo" href="#top">颜婕</a>
+      <a className="navbar-logo" href="#top">颜婕 · Yanjie</a>
       <ul className="navbar-links">
         {links.map(({ label, href }) => (
           <li key={href}>
