@@ -1,41 +1,16 @@
-.education-timeline {
+.edu-list {
   display: flex;
   flex-direction: column;
   gap: 0;
-  position: relative;
-  padding-left: 28px;
-}
-
-.education-timeline::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 2px;
-  background: var(--gradient);
-  border-radius: 2px;
 }
 
 .edu-item {
-  position: relative;
-  padding: 0 0 48px 32px;
-}
-
-.edu-item::before {
-  content: '';
-  position: absolute;
-  left: -5px;
-  top: 8px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--gradient);
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+  padding: 28px 0;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .edu-item:last-child {
-  padding-bottom: 0;
+  border-bottom: none;
 }
 
 .edu-header {
@@ -47,41 +22,68 @@
   flex-wrap: wrap;
 }
 
-.edu-school {
-  font-size: 18px;
-  font-weight: 700;
+.edu-school-zh {
+  font-family: var(--font-serif);
+  font-size: 16px;
+  font-weight: bold;
   color: var(--color-text);
 }
 
+.edu-school-en {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
 .edu-period {
-  font-size: 13px;
+  font-family: var(--font-sans);
+  font-size: 12px;
   color: var(--color-text-secondary);
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
-.edu-degree {
-  font-size: 15px;
-  color: var(--color-accent-start);
-  font-weight: 500;
-  margin-bottom: 8px;
-}
-
-.edu-desc {
+.edu-degree-zh {
+  font-family: var(--font-serif);
+  font-style: italic;
   font-size: 14px;
+  color: var(--color-accent);
+  margin: 6px 0 2px;
+}
+
+.edu-degree-en {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 12px;
+  color: var(--color-accent);
+  margin-bottom: 10px;
+}
+
+.edu-desc-zh {
+  font-size: 13px;
   color: var(--color-text-secondary);
-  margin-bottom: 12px;
+  line-height: 1.7;
+}
+
+.edu-desc-en {
+  font-size: 12px;
+  color: #888;
+  line-height: 1.7;
+  margin-bottom: 10px;
 }
 
 .edu-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .edu-tag {
-  font-size: 12px;
-  padding: 4px 12px;
-  border-radius: 980px;
-  background: rgba(102, 126, 234, 0.1);
-  color: var(--color-accent-start);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  padding: 3px 8px;
+  background: var(--color-award-bg);
+  color: var(--color-award-text);
+  border-radius: 2px;
 }
