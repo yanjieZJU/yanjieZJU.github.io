@@ -1,6 +1,6 @@
-// src/components/Hero.jsx
 import useScrollAnimation from '../hooks/useScrollAnimation'
 import avatar from '../assets/avatar.svg'
+import profile from '../../content/profile.js'
 import './Hero.css'
 
 export default function Hero() {
@@ -9,33 +9,29 @@ export default function Hero() {
   return (
     <section className="hero" id="top">
       <div className="hero-inner fade-up" ref={ref}>
-        <div className="hero-text">
-          <p className="hero-label">人与 AI 交互设计研究者</p>
-          <h1 className="hero-name">颜婕</h1>
-          <p className="hero-subtitle">浙江大学 · 设计学 硕士（保研）</p>
-          <p className="hero-meta">研究方向：人与AI交互，关注大模型在设计支持、体验评估与智能交互中的应用</p>
+        <img className="hero-avatar" src={avatar} alt={profile.nameZh} />
+        <div className="hero-bio">
+          <div className="hero-name-zh">{profile.nameZh}</div>
+          <div className="hero-name-en">{profile.nameEn}</div>
+          <div className="hero-affil-zh">{profile.affiliationZh}</div>
+          <div className="hero-affil-en">{profile.affiliationEn}</div>
+          <p className="hero-desc-zh">{profile.bioZh}</p>
+          <p className="hero-desc-en">{profile.bioEn}</p>
           <div className="hero-links">
-            <a
-              className="hero-btn hero-btn-primary"
-              href="mailto:yanjie02@zju.edu.cn"
-            >
-              ✉ 联系我
-            </a>
-            <a
-              className="hero-btn hero-btn-secondary"
-              href="https://github.com/yanjieZJU"
-              target="_blank"
-              rel="noreferrer"
-            >
-              GitHub →
-            </a>
+            {profile.email && (
+              <a href={`mailto:${profile.email}`} className="hero-link">{profile.email}</a>
+            )}
+            {profile.github && (
+              <a href={profile.github} className="hero-link" target="_blank" rel="noreferrer">GitHub</a>
+            )}
+            {profile.scholar && (
+              <a href={profile.scholar} className="hero-link" target="_blank" rel="noreferrer">Google Scholar</a>
+            )}
+            {profile.cv && (
+              <a href={profile.cv} className="hero-btn" download>↓ CV</a>
+            )}
           </div>
         </div>
-        <img
-          className="hero-avatar"
-          src={avatar}
-          alt="颜婕头像"
-        />
       </div>
     </section>
   )
