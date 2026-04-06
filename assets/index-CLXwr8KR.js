@@ -80,7 +80,7 @@ order: 5
 1. 文章提取：收集1200+篇HCI领域文章，以系统架构图为核心，结合全文内容提取出功能模块与连接关系
 2. 在Neo4j中构建知识图谱，节点分为三类，文章、功能模块和模块角色，边为连接关系（包含模块的连接、文章与模块的包含关系、模块与角色的属性关系）
 3. 参考GraphRAG的思路，将文章节点和功能节点进行聚类，得到514个功能簇（Function Communities）和101个场景簇（Scene Clusters），每个功能簇拥有一段描述；在每个场景簇中统计了功能簇的出现频率和拓扑模式，得到在该场景下较为关键或常用的功能模块。
-![Knowledge Graph Structure](diamaid/KG.png)`,dA=`---
+![Knowledge Graph Structure](diamaid/KG_2.png)`,dA=`---
 title_zh: "基于LLM的说服式语音驾驶助手"
 title_en: "Driver Assistant: Persuading Drivers to Adjust Secondary Tasks Using Large Language Models"
 period: "2023.06 — 2023.09 | IEEE SMC 2025 (CCF-C)"
