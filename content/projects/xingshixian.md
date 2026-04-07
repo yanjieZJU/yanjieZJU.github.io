@@ -11,19 +11,17 @@ paper: ""
 order: 3
 ---
 
-针对3D打印鞋品牌小程序的增长与转化问题，本项目通过竞品分析与关键页面重构，推动用户体验和转化效率同步提升。
-
-## Abstract / 摘要
-
-针对国内首个3D打印鞋品牌小程序销量与转化问题，通过竞品分析（Adidas、匹克等）明确差异化方向，重构信息架构与关键页面（社区模块、商城分类、商品详情），推动用户体验与转化提升。
-
-For China's first 3D-printed shoe brand mini-program, we identified conversion issues through competitive analysis (Adidas, Converse, etc.), then restructured the information architecture and redesigned key pages (community module, product catalog, product detail), driving improvements in UX and conversion.
+针对3D打印鞋品牌小程序的增长与转化问题，本项目通过数据分析、用户研究、竞品分析，对小程序的关键页面重构，推动用户体验和转化效率同步提升。
 
 ## Overview / 概述
 
 ![Overview Video](/xingshixian/video.mp4)
 
-Redesign scope: community module → product catalog → product detail page. Research methods: competitive analysis, user interviews, heuristic evaluation.
+
+本项目围绕国内3D打印消费品牌“星世线”小程序转化率低的问题展开，通过对2022年7–8月后台数据的分析，我们发现平台存在明显的用户流失现象：尽管流量主要来源于公众号与社交分享，但用户访问深度较浅，首页跳出率较高，未能有效承接用户并引导后续转化。基于这一核心问题，我们从用户、市场与产品三个层面展开进一步研究，结合童鞋市场趋势与竞品分析，明确品牌在“舒适性+多场景功能性”上的潜在优势，但当前小程序在信息表达与信任构建上未能充分传达该价值。
+
+在用户研究阶段，我们构建了以“新一线城市精致妈妈”为代表的目标用户画像，并通过问卷调研分析用户在儿童鞋选购及电商决策中的关键因素，发现用户更关注舒适度、外观等产品属性，同时在购买过程中高度依赖用户评价、商品优惠及图片信息等决策依据。结合用户旅程分析与竞品对比，我们进一步定位问题主要集中在：首页信息层级不清、产品卖点表达不足、信任机制缺失以及整体体验路径不顺畅。基于上述洞察，我们对小程序的信息架构与交互体验进行了系统性重构，通过强化品牌视觉风格、丰富产品展示维度、优化购买路径并引入社区模块，提升用户对产品价值的理解与参与感，从而推动转化效率与品牌粘性的提升。
+
 
 
 ## Data Analysis / 数据分析
@@ -91,15 +89,10 @@ Redesign scope: community module → product catalog → product detail page. Re
 首页 :: 以绿色为主色调，设计自然、卡通的视觉风格，瞄准目标用户，传达自由生长的品牌理念和特色
 商城 :: 对不同的产品系列以及礼盒和套装进行分类，同时增加了搜索框和热搜等设计，视觉上与首页保持统一
 社区 :: 新增社区模块，用户可以在此分享生活和出游日常，以强化产品功能性，建立品牌社群
-详情 :: 产品详情页面使用顶部导航栏实现灵活跳转，参考“黄金视觉区 1.5屏；商品功能区 3.5屏；视觉展示区 3屏；售后服务区 1屏”的设计原则全方位展示产品[1]左瑞瑞,叶文静.跨境电商B2B背景下产品详情页优化技巧——以阿里巴巴国际站平台为例[J].对外经贸实务,2020,(07):69-72.[2]左瑞瑞,叶文静.跨境电商B2B背景下产品详情页优化技巧——以阿里巴巴国际站平台为例[J].对外经贸实务,2020,(07):69-72.
+详情 :: 产品详情页面使用顶部导航栏实现灵活跳转，参考“黄金视觉区 1.5屏；商品功能区 3.5屏；视觉展示区 3屏；售后服务区 1屏”的设计原则构建产品详情页，全方位展示产品[1](https://kns.cnki.net/kcms2/article/abstract?v=QhEoMlXbe3nM7Q94wJe4FVeWm3Z4i8wS2aBQ9LltMSbY0oSJnM9T5pnRx5jQ3gBFxl9U6WQHeU8mxz4zDe7FfQ==&uniplatform=NZKPT&language=CHS)。
+参考 :: [1](https://kns.cnki.net/kcms2/article/abstract?v=QhEoMlXbe3nM7Q94wJe4FVeWm3Z4i8wS2aBQ9LltMSbY0oSJnM9T5pnRx5jQ3gBFxl9U6WQHeU8mxz4zDe7FfQ==&uniplatform=NZKPT&language=CHS) 左瑞瑞,叶文静.跨境电商B2B背景下产品详情页优化技巧——以阿里巴巴国际站平台为例[J].对外经贸实务,2020,(07):69-72.
 ```
-
-- **Research:** Competitive analysis + user interviews (n=12)
-- **Design tool:** Figma
-- **Deliverables:** Redesigned IA, hi-fi prototypes for 3 key pages
-- **Analytics:** Conversion funnel analysis with SPSS
 
 ## Prototype Demo / 原型展示
 
 <chart id="PrototypeShowcase" />
-

@@ -6,12 +6,7 @@ export default function Footer() {
     <footer className="footer">
       <p>
         © 2026 {profile.nameZh} · {profile.nameEn}
-        {profile.github && (
-          <>{' · '}<a href={profile.github} target="_blank" rel="noreferrer">GitHub</a></>
-        )}
-        {profile.email && (
-          <>{' · '}<a href={`mailto:${profile.email}`}>{profile.email}</a></>
-        )}
+        {' · '}Build with Claude Code
       </p>
     </footer>
   )

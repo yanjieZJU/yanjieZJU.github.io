@@ -1,37 +1,56 @@
 ---
 title_zh: "基于LLM的说服式语音驾驶助手"
-title_en: "Persuasive Voice Driving Assistant Based on LLM"
-period: "2023.06 — 2023.09"
-role_zh: "项目核心成员"
-role_en: "Core Member · IEEE SMC 2025"
-tags: ["LLM", "Prompt Engineering", "HCI", "IEEE SMC 2025", "自动驾驶"]
+title_en: "Driver Assistant: Persuading Drivers to Adjust Secondary Tasks Using Large Language Models"
+period: "2023.06 — 2023.09 | IEEE SMC 2025 (CCF-C)"
+role_zh: "学生二作"
+role_en: "Student second author"
+tags: ["LLM", "Prompt Engineering", "Automated Driving", "Copilot"]
 cover: ""
-github: "https://github.com/yanjieZJU"
-paper: ""
-order: 3
+github: ""
+paper: "https://ieeexplore.ieee.org/document/11343508"
+order: 2
 ---
-
-## Abstract / 摘要
 
 面向L3自动驾驶场景的说服式语音驾驶助手，设计六类说话策略与LLM语言生成方案，在模拟驾驶实验中显著降低用户认知负荷，有用性提升11.7%，易用性提升30.4%，行为意愿提升5.4%。
 
-A persuasive voice driving assistant for L3 autonomous driving scenarios. We designed six persuasion strategy categories and an LLM-based language generation framework. Simulated driving experiments showed significant reduction in cognitive load, with +11.7% perceived usefulness, +30.4% ease of use, +5.4% behavioral intention.
+## Abstract / 摘要
 
-## System Overview
+三级自动驾驶系统能让驾驶员同时进行其他任务，但同时降低了他们对风险的感知。在出现需要驾驶员采取干预措施的紧急情况时，该系统会通过有限的反应时间窗口来提醒驾驶员，向他们施加了较大的认知负荷。为解决这一挑战，本研究采用了大型语言模型（LLM）来帮助驾驶员通过“人性化”的劝导性建议保持对道路状况的适当关注。我们的工具利用三级系统所遇到的道路状况作为触发因素，通过视觉和听觉途径主动引导驾驶员的行为。实证研究表明，我们的工具在降低认知负荷的同时能够有效地维持驾驶员的注意力，并协调次要任务与接管行为。我们的工作为在多任务自动驾驶过程中利用 LLM 支持驾驶员提供了见解。
 
-<!-- Add system diagram here -->
+## System Design / 系统设计
 
-Six persuasion strategies were designed and mapped to LLM prompt templates. The system selects the appropriate strategy based on driving context and generates natural language utterances.
+该系统包含两项功能：第一，评估道路风险和驾驶员注意力，以确定是否需要进行说服；第二，生成说服内容。
+
+### 说服策略设计
+
+**说服时机**
+
+该系统通过评估两个关键因素来判断何时触发劝导干预：道路风险信息和驾驶员注意力分配。道路风险评估采用五个参数来描述道路风险：交通流量、行人存在和移动、道路状况、照明和天气状况，这些数据已从现有驾驶系统中收集，并作为LLM的输入。使用Tobii Glasses 3眼动追踪器追踪驾驶员的眼动，从而识别分心驾驶行为。我们监测驾驶员在特定时间段（例如30秒）内的分心驾驶行为及其频率。道路风险数据和驾驶员行为数据均被转换为带时间戳的文本格式，并由LLM进行处理。
+
+**说服内容**
+
+基于Fogg行为模型和说服性系统设计框架（PSD）设计了六种说服策略：1. 状态反馈；2. 强调风险；3. 默认关注（替驾驶员做选择）；4. 可靠建议；5. 社会联系；6. 社会互动。
+
+| 要素 | 策略 | 方法描述 |
+|------|------|---------|
+| 提醒不合理行为 | 状态反馈 | 及时的提醒与环境危险反馈，吸引驾驶员注意（UI）。|
+| 提醒不合理行为 | 强调风险 | 提升驾驶员警觉性，缩短动作与准备状态之间的响应时间。|
+| 提升执行能力 | 默认关注 | 简化任务步骤，降低决策难度。|
+| 提升执行能力 | 可靠建议 | 根据场景与驾驶员状态，引导驾驶员关注高风险事项。|
+| 增强行为动机 | 社会联结 | 建立连接，唤起共同维护安全的责任感。|
+| 增强行为动机 | 社会互动 | 情感表达与直觉反馈；给予鼓励与奖励。|
+
+
+**用户界面设计**
+
+![UI](/driver_assistant/UI.jpg)
+- 使用卡通人物形象，通过不同的表情反映驾驶员的当前状态。当驾驶员专注且状态良好时，虚拟形象会显得活泼快乐；反之，则会显得紧张焦虑。此外，当驾驶员表现出良好的驾驶行为时，助手会提供积极的“鼓励”反馈。
+- 随着风险增加，界面边框会变为黄色/红色，提醒驾驶员风险正在迅速增加。界面还会显示行人流量和车流量的变化、路况以及其他交通信息。
 
 ## Key Results / 核心成果
 
-- 有用性提升 11.7% / +11.7% perceived usefulness
-- 易用性提升 30.4% / +30.4% ease of use
-- 行为意愿提升 5.4% / +5.4% behavioral intention
-- Published: IEEE SMC 2025
+- 有用性提升 11.7%
+- 易用性提升 30.4%
+- 行为意愿提升 5.4%
+- 发表于 IEEE SMC 2025
 
-## Implementation Details
-
-- **Persuasion strategies:** 6 strategy categories (ethos, pathos, logos, etc.)
-- **LLM generation:** Prompt engineering for contextual utterance generation
-- **Evaluation:** Simulated driving experiment with user study

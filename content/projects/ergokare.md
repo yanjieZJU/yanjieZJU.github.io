@@ -1,38 +1,86 @@
 ---
 title_zh: "基于LLM的人体工效学风险预筛助手"
-title_en: "ErgoKARE: LLM-Powered Ergonomic Risk Screening Assistant"
-period: "2024.10 — 2025.11"
+title_en: "ErgoKARE: A Knowledge-Augmented LLM Method for Video-Based Ergonomic Risk Screening and Recommendation Generation"
+period: "2024.10 — 2025.11 | IDETC（审稿中）"
 role_zh: "项目负责人"
 role_en: "Project Lead"
-tags: ["LLM", "RAG", "GPT-4o", "Prompt Engineering", "工效学"]
+tags: ["LLM", "RAG", "Prompt Engineering", "Ergonomics"]
 cover: ""
 github: "https://github.com/yanjieZJU/ErgoKARE"
 paper: ""
 order: 1
 ---
 
-## Abstract / 摘要
-
 针对工业场景工效学评估高度依赖人工分析的问题，以知识增强LLM辅助系统替代人工筛查，构建297条高频干预方案知识库，基准准确率提升8.7%，建议有效性提升16.1%，70.8%方案获领域专家偏好。
 
-Industrial ergonomic assessment relies heavily on manual expert analysis. We propose ErgoKARE, a knowledge-augmented LLM system that automates ergonomic risk screening. We built a 297-entry high-frequency intervention knowledge base, achieving +8.7% baseline accuracy, +16.1% recommendation effectiveness, with 70.8% of suggestions preferred by domain experts.
+## Abstract / 摘要
 
-## System Overview
+有效的工效学风险管控对于减少与工作相关的肌肉骨骼疾病（WMSDs）至关重要，但给安全专业人员带来了巨大负担。与许多工程评估任务一样，这一过程需要将视觉观察、情境推理和特定领域的专业知识相结合，而传统的基于规则的工具和通用人工智能模型都无法充分应对这种组合。本研究提出了ErgoKARE，这是一种知识增强型大型语言模型（LLM）工具，用于初步工效学筛查和分析，并支持专家审查。该工具以操作视频为输入，识别可能导致疲劳或受伤的关键风险因素，并根据工效学知识和特定领域的指南生成干预建议。我们进行了两项实证研究，以评估ErgoKARE区分工效学风险水平的能力，并与人类判断和通用基线模型相比，评估其分析和建议的感知质量。结果表明，ErgoKARE在任务层面的风险排序上始终与人类评估者保持一致。专家评估显示，与基准相比，ErgoKARE 的输出具有更高的准确性和有效性评分，而领域参与者则表现出混合的偏好，这反映了在分析深度和实际简洁性之间的紧张关系。这些发现表明，知识增强型语言模型能够促进初步筛查和起草初步评估，以协助职业风险缓解。它们还指出了一个可推广的框架，用于需要系统整合视觉、上下文和领域知识的工程评估任务。
 
-<!-- Add architecture diagram here: ![Architecture](/images/ergokare-arch.png) -->
+## System Design / 系统设计
 
-The system follows a RAG pipeline: user inputs a workplace scenario description → retrieval from the intervention knowledge base → GPT-4o generates risk assessment and intervention suggestions → expert validation loop.
+![Architecture](/ergoKARE/framework.jpg)
+
+### 阶段 1 | 风险初筛
+
+**用“标准化评分 + 语义理解”代替单一判断**
+
+在风险识别阶段，我们没有直接依赖LLM进行端到端判断，而是将其拆分为“结构化评分”与“情境推理”两个模块。这样设计是为了平衡标准化与灵活性：既保证结果符合工效学规范，又避免机械评分带来的误判。
+
+1. 结构化评分：系统首先对视频进行抽帧（5 fps），以捕捉关键动作并控制计算成本。随后，LLM基于关键帧识别代表性姿态，并对各身体部位（上肢、躯干、颈部等）进行中间评分（基于RULA方法）。最终的RULA分数由Python脚本计算得到，并输出为结构化JSON。
+2. 情境推理：在获得结构化评分后，系统引入第二个LLM模块，对风险进行语义解释与优先级排序。与简单描述不同，这一步强调“情境理解”：模型不仅识别高风险姿态，还会结合任务特征与环境因素进行调整。例如，在高空作业中，系统会更关注平衡风险；在装配任务中，则强调手腕负荷。同时，模型会主动忽略短暂动作或已有支撑条件，避免过度惩罚。
+
+### 阶段 2 | 建议生成
+
+**用检索增强代替自由生成**
+
+在建议生成阶段，核心问题是“生成的内容是否可信、可执行”。为此，系统采用RAG（Retrieval-Augmented Generation）框架，将生成过程严格约束在专业知识范围内。
+1. 检索：系统将任务信息（环境、工具、姿态等）转化为查询，在工效学知识库中检索相关内容。每次固定返回15条候选（覆盖5类干预策略），以保证方案的多样性。
+2. 过滤：检索结果会经过两层过滤——第一层通过相似度阈值去除冗余信息，第二层由LLM进行语义筛选，判断这些方案是否真正解决当前风险、是否符合场景、是否与已有条件冲突。这一步相当于引入一个“专家筛选器”，避免模型直接使用不适配的知识。
+3. 生成：在最终生成阶段，LLM基于筛选后的内容进行整合输出。每条建议被强制拆分为三个部分：核心策略、具体行动、原因解释。
+
+案例：
+```card
+策略 :: 使用平衡背带
+行动 :: 穿戴平衡背带以支撑重物的重量。
+原因 :: 这有助于保持中立姿势，并减少因弯腰和伸手造成的不适。
+``` 
+
+### 知识库
+系统的知识库来源于NIOSH与IEA等权威指南，使用GPT-4模型进行提取为统一的“任务-目标-干预措施”结构。同时，所有措施被划分为五类（环境、设备、流程、姿态、培训），以支持更均衡的建议生成。
+
+
+## Evaluation Methods / 评估方法
+
+系统评估被拆分为两个层面：
+- 验证模型是否能够正确识别风险（客观一致性）
+- 评估输出在真实场景中的可用性与质量（主观评价）
+
+### Study 1 | 风险评估一致性
+
+**研究问题**：模型是否能像人一样区分高风险与低风险任务
+
+**方法设计**：我们构建了涵盖六类不同风险等级的典型作业任务，并邀请人类评估者对其进行独立评分，同时对同一任务输入系统获取RULA评分结果。考虑到LLM在推理过程中存在一定随机性，我们对每个任务进行了多次采样并取平均值，以减少单次输出波动对结果的影响，从而获得更稳定的模型表现。
+
+![Tasks](/ergoKARE/tasks.jpg)
+
+**指标**：在评估指标上，我们重点关注系统在“风险排序”层面的表现，而非单一数值的一致性。具体而言，采用Spearman相关系数衡量模型与人类评估在任务风险排序上的一致性，以验证其用于风险优先级筛选的能力；同时引入Bland–Altman分析，从误差分布的角度考察模型评分与人工评分之间的偏差范围，以判断系统在绝对评分上的稳定性与可靠性。
+
+**结果**：结果表明，系统在任务风险排序上与人类评估具有较高一致性（Spearman r≈0.63），并在任务级别实现了完全一致的排序表现，说明其能够有效支持风险优先级的初筛。同时，Bland–Altman分析显示，模型在绝对评分上略低于人类评估结果，但整体偏差处于$\pm$ 0.5的可接受范围内（bias=-0.42）。
+
+### Study 2 | 建议质量评估
+
+**研究问题**：系统生成的分析和建议是否“像专家、能落地”
+
+**方法设计**：我们采用“专家评估 + 用户偏好”的双阶段设计。首先邀请具备工效学背景的专家，对系统生成的风险分析与建议进行评分，并与baseline进行成对对比；随后引入具有相关经验的普通用户，从可读性与接受度角度，对两种方案进行主观偏好选择。该设计旨在同时覆盖“专业正确性”与“实际感受”两个维度。
+
+**指标**：在专家评估中，我们主要采用两个核心维度——准确性（Accuracy），用于衡量系统是否正确识别关键风险；有效性（Effectiveness），用于评估建议是否具体、可执行且具有实际改善价值。同时，通过逐对比较统计专家对不同方案的偏好比例。在用户评估中，则以整体偏好（Preference）为核心指标，关注用户在真实阅读情境下更倾向于选择哪一种输出结果，从而反映系统的可理解性与沟通效果。
+
+**结果**：评估结果显示，ErgoKARE在专家评分中显著优于baseline，尤其在建议有效性维度上提升明显，表明引入知识库与过滤机制后，生成内容更具可操作性。同时，在逐对比较中，约70.8%的输出被专家判定为优于baseline，验证了系统在专业场景下的优势。然而，在用户偏好层面，两种方案整体呈现接近均衡的分布，进一步分析发现，专家更倾向于选择信息更全面的ErgoKARE，而部分普通用户则更偏好表达更简洁的baseline，这揭示了分析深度与信息可读性之间的权衡关系。
+
 
 ## Key Results / 核心成果
 
-- 构建 297 条高频干预方案知识库 / 297-entry intervention knowledge base
-- 基准准确率提升 8.7% / +8.7% baseline accuracy
-- 建议有效性提升 16.1% / +16.1% recommendation effectiveness  
-- 70.8% 方案获领域专家偏好 / 70.8% suggestions preferred by domain experts
-
-## Implementation Details
-
-- **LLM backbone:** GPT-4o with structured prompt engineering
-- **Knowledge base:** 297 curated ergonomic intervention strategies
-- **RAG pipeline:** Semantic retrieval + contextual generation
-- **Evaluation:** Expert study (n=24) with comparative analysis against baseline
+- 基准准确率提升 8.7% 
+- 建议有效性提升 16.1% 
+- 70.8% 方案获领域专家偏好
