@@ -497,14 +497,14 @@ class PlannerAgent:
 
         ## Naming and Description Rules for Anchors
         - **user_term**: Must be scenario-specific — include concrete nouns from the user's domain (e.g., if the system is about "采摘机器人", use "采摘任务分配" not "任务分配", "果实识别" not "目标识别"). Short (2–8 chars), action or object oriented.
-        - **description**: Must explicitly state (1) what data/input this module receives, (2) what it does to that data, and (3) what output it produces. Example format: "接收[输入]，通过[处理方式]，输出[输出结果]". Avoid abstract summaries like "进行智能决策" — say exactly WHAT decision, based on WHAT input.
+        - **description**: Must explicitly state (1) what data/input this module receives, (2) what it does to that datsa, and (3) what output it produces. Example format: "接收[输入]，通过[处理方式]，输出[输出结果]". Avoid abstract summaries like "进行智能决策" — say exactly WHAT decision, based on WHAT input.
 
         ## Output Structure (JSON)
         {{
             "plans": [
                 {{
                     "perspective": "use one short phrase to describe the perspective, highlighting the key functions or biggest advantages and innovations of this design (e.g., 'Immersive interactive feedback'). Do not just copy the perspective title or vague terms like 'cross-domain'",
-                    "rationale": "Explain explicitly: 'Inspired by [Source Name: Feature], we introduced [Function] to achieve [Goal]...' Ground it in the user's specific scenario.",
+                    "rationale": "Explain explicitly: 'Inspired by [Source Name: **Feature**], we introduced [Function] to achieve [Goal]...' Ground it in the user's specific scenario.",
                     "additional_anchors": [
                         {{
                             "user_term": "Scenario-specific module name (e.g., '果实成熟度识别' not '目标识别')",
@@ -883,7 +883,7 @@ User-facing text: primarily Chinese; proper nouns/essential technical terms may 
 - **Information nodes** (for key data artifacts central to user understanding, e.g. "风险提示", "任务上下文"): name describes the information, not the process. Use sparingly — prefer function-oriented nodes for backend logic.
 - **Descriptions**: `function` and `technical_methods` must be detailed and grounded in retrieved info — no fabrication, no vague summaries. Explain HOW methods work and WHY they fit. Always reference the user's specific scenario context.
   - `function`: At least 1 complete sentence. Must clearly state (1) what specific data/input this module receives, (2) what it does to that data, and (3) what output it produces. Never stop mid-sentence or leave the reader guessing.
-  - `technical_methods`: **minimum 2 complete sentences**. Name the concrete technique, explain how it works in this domain, and state why it was chosen over alternatives.
+  - `technical_methods`: **minimum 2 complete sentences**. Describes **implementation means** (the concrete techniques, hardware equipments, software algorithms, or tools used to realize this module) — NOT processing logic or execution steps. Name the concrete technique, explain how it is implemented in this domain, and state why it was chosen over alternatives.
   - Apply the same depth requirement to **sub_nodes** — each sub_node's `function` and `technical_methods` must also be at least 2 complete sentences, not one-liners.
 - **Subnodes**: Sub_nodes decompose the parent module's responsibility into traceable internal components. They fall into two types — choose the right one:
   - **Type A — Processing Steps**: when the parent handles data through ordered stages (e.g., receive → filter → classify). Each sub_node represents one meaningful step.
@@ -941,10 +941,10 @@ Use compact string format for `ports` to save space:
             "name": "module name",
             "brief_description": "one sentence, scenario-specific, no jargon",
             "function": "what specific inputs this module receives, what operation it performs on them, and what output it produces",
-            "technical_methods": "name the concrete technique, explain HOW it processes data in this domain, and WHY it was chosen",
+            "technical_methods": "the concrete technique/algorithm/tool used to implement this module (NOT steps like '先A后B' — those go in function); explain HOW it is implemented and WHY chosen",
             "role": "input|output|processing|data",
             "references": "exact names from Retrieved Modules or 'None'",
-            "sub_nodes": [{{"name":"plain readable name in parent's domain context — no algorithm names, no paper titles","function":"≥1 sentence: 接收[具体输入]，执行[具体操作]，输出[具体结果]","technical_methods":"≥2 sentences: name technique + how it works in this domain + activation condition"}}],
+            "sub_nodes": [{{"name":"plain readable name in parent's domain context — no algorithm names, no paper titles","function":"≥1 sentence: 接收[具体输入]，执行[具体操作]，输出[具体结果]","technical_methods":"≥2 sentences: implementation means (NOT processing steps — those belong in function); name technique + how it is implemented in this domain + activation condition"}}],
             "ports": {{ // MINIMUN NECESSARY CONNECTIONS
                 "incoming": ["ModA->分析结果", "ModB.SubX->控制信号"], 
                 "outgoing": ["ModC->处理后数据", "ModA->检测到异常时"],
@@ -1272,7 +1272,7 @@ class EditorAgent:
               In both cases: no algorithm names, no paper-title phrasing, no generic nouns without domain qualification.
             - **function field**: explicitly state (1) what data/input this module receives, (2) what specific operation it performs, (3) what output it produces. Do NOT use vague phrases like "进行分析" or "实现决策" — say exactly WHAT is analyzed, WHAT decision is made.
             - Ensure the added nodes from the divergent plans are integrated meaningfully.
-            - **Provide detailed descriptions for both `function` and `technical_methods` from the retrieved information BUT DO NOT FABRICATE.** You must explicitly articulate the module's specific role, core responsibilities, and crucial importance within the overall system. Explain exactly HOW the technical methods work, process data, and why they were chosen, avoiding brief or vague summaries.
+            - **Provide detailed descriptions for both `function` and `technical_methods` from the retrieved information BUT DO NOT FABRICATE.** You must explicitly articulate the module's specific role, core responsibilities, and crucial importance within the overall system. `technical_methods` describes **implementation means** (the concrete techniques/algorithms/tools used), NOT processing steps or logic (先A后B belongs in `function`). Explain exactly HOW each technical method implements the module's capability and why it was chosen, avoiding brief or vague summaries.
             
         **Connections**:
             - Build a clear primary end-to-end flow with MINIMUN NECESSARY connections.
@@ -1302,7 +1302,7 @@ class EditorAgent:
                         "change_type": "added | modified",
                         "brief_description": "...",
                         "function": "Detailed explanation of the module's function, its core responsibilities, and its crucial role and importance within the overall system architecture.",
-                        "technical_methods": "Detailed description of the specific algorithms, models, or technical methods used, including HOW they process data and why they are selected. You MUST abstract away the original paper context.",
+                        "technical_methods": "Detailed description of the specific techniques, algorithms, equipments or tools used as **implementation means** — NOT processing steps or execution logic. Explain HOW each technique implements the module's capability and WHY it was chosen. You MUST abstract away the original paper context.",
                         "role": "choose from ['input', 'output', 'processing', 'data']",
                         "sub_nodes": [],
                         "ports": {{}}

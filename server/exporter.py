@@ -231,7 +231,7 @@ def export_to_docx(image_b64: str, node_details: dict, overall_description: str 
         doc.add_paragraph("")
 
     # Add Flowchart Image (from frontend canvas)
-    doc.add_heading("2. 架构流程图", level=1)
+    doc.add_heading("2. 系统架构图", level=1)
 
     if image_b64:
         if ',' in image_b64:
@@ -266,7 +266,6 @@ def export_to_docx(image_b64: str, node_details: dict, overall_description: str 
         table = doc.add_table(rows=0, cols=2)
         table.style = 'Table Grid'
 
-        add_table_row(table, "Brief Description", mod.get("brief_description", ""))
         add_table_row(table, "Function", mod.get("function", ""))
         add_table_row(table, "Technical Methods", mod.get("technical_methods", ""))
 

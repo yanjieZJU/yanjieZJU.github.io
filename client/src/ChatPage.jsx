@@ -163,6 +163,7 @@ export default function ChatPage() {
   const sessionRef = useRef(createSession());
   const listRef = useRef(null);
   const inputRef = useRef(null);
+  const userScrolledUp = useRef(false);
 
   // Load sessions on mount + trigger RAG warmup
   useEffect(() => {
@@ -170,9 +171,21 @@ export default function ChatPage() {
     fetch(`${API_BASE}/warmup/rag`, { method: 'POST' }).catch(() => {});
   }, []);
 
-  // auto-scroll to bottom
+  // Track whether user has scrolled up manually
   useEffect(() => {
-    if (listRef.current) {
+    const el = listRef.current;
+    if (!el) return;
+    function onScroll() {
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      userScrolledUp.current = distanceFromBottom > 80;
+    }
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+
+  // auto-scroll to bottom only when user hasn't scrolled up
+  useEffect(() => {
+    if (listRef.current && !userScrolledUp.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight;
     }
   }, [messages, loading]);
@@ -283,16 +296,16 @@ export default function ChatPage() {
   function handlePaste(e) {
     const items = e.clipboardData?.items;
     if (!items) return;
-    for (const item of items) {
-      if (item.type.startsWith('image/')) {
-        e.preventDefault();
-        const file = item.getAsFile();
-        const reader = new FileReader();
-        reader.onload = (ev) => setAttachedImage(ev.target.result);
-        reader.readAsDataURL(file);
-        break;
-      }
+    // First check if there's an image in the clipboard
+    const imageItem = Array.from(items).find((item) => item.type.startsWith('image/'));
+    if (imageItem) {
+      e.preventDefault();
+      const file = imageItem.getAsFile();
+      const reader = new FileReader();
+      reader.onload = (ev) => setAttachedImage(ev.target.result);
+      reader.readAsDataURL(file);
     }
+    // If no image, allow default paste behavior so text gets inserted into textarea
   }
 
   async function handleSend() {
@@ -300,6 +313,7 @@ export default function ChatPage() {
     if ((!text && !attachedImage) || loading) return;
     setInput('');
     setLoading(true);
+    userScrolledUp.current = false; // reset so new response scrolls into view
 
     const userMsg = {
       role: 'user',

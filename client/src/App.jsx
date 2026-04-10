@@ -14,6 +14,299 @@ import 'reactflow/dist/style.css';
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:8000' : '/api';
 
+const plan_placeholder =  {
+        "overall_description": "本系统为现代化物流仓库一线操作员打造高流畅度、低中断的智能拣货补货协作工作流。其核心创新体现在多模态异常一键上报、智能任务优先级排序、动态任务可视化、操作员实时压力反馈四大能力的深度融合，通过智能排序与视觉引导，动态适配仓库现场状态和操作员工作节奏，有效减少任务打断、优先级混乱与异常积压，全面提升拣补货高峰期的作业效率与体验。",
+        "module_details": [
+          {
+            "name": "多模态异常快速上报输入",
+            "brief_description": "支持语音、扫码、触摸等多方式让操作员快速上一键报告异常。",
+            "function": "为操作员提供语音、扫码、触摸等多模态输入入口，极大简化缺货、错放、溢出等异常的上报流程，确保异常情况在作业高压下能被及时、低成本记入系统。",
+            "technical_methods": "集成安卓基础触控与语音识别引擎，允许在任意主屏或任务节点上快速呼出异常上报入口。扫码可由专用硬件或手机摄像头调用，语音输入则由实时语音识别模块处理，触控通过UI快速按钮完成。所有输入转为结构化异常事件，统一推送至异常处理流。",
+            "role": "input",
+            "references": "Multimodal_Input_Handler,User_Interaction",
+            "sub_nodes": [
+              {
+                "name": "语音快速上报",
+                "function": "识别并解析操作员的语音异常说明。",
+                "technical_methods": "采用本地和云端ASR混合模型实时转写异常内容，关键词抽取辅助分类异常类型。"
+              },
+              {
+                "name": "扫码/拍照快速上报",
+                "function": "通过扫码或拍照捕获商品/货架异常。",
+                "technical_methods": "调用摄像头读取商品条码或拍照，结合OCR/条码解析快速定位异常目标。"
+              },
+              {
+                "name": "触摸一键异常上报",
+                "function": "通过触控界面快速选择常见异常类型。",
+                "technical_methods": "弹出预设异常选项的快捷触控面板，支持一键多选及备注补充。"
+              }
+            ],
+            "ports": {
+              "incoming": [],
+              "outgoing": [
+                {
+                  "target_mod": "异常事件识别与归档",
+                  "target_node": null,
+                  "originates_from_internal_node": null,
+                  "edge_label": "结构化异常输入事件"
+                }
+              ],
+              "internal_flow": [
+                {
+                  "source_node": "语音快速上报",
+                  "target_node": null,
+                  "edge_label": "语音转为异常事件"
+                },
+                {
+                  "source_node": "扫码/拍照快速上报",
+                  "target_node": null,
+                  "edge_label": "扫码/拍照转为异常事件"
+                },
+                {
+                  "source_node": "触摸一键异常上报",
+                  "target_node": null,
+                  "edge_label": "触控转为异常事件"
+                }
+              ]
+            },
+            "reference": {
+              "name": "Multimodal_Input_Handler",
+              "technical_details": "Module: Multimodal_Input_Handler\nSource: Voice and Touch Based Error-tolerant Multimodal Text Editing and Correction for Smartphones\nCommunity Context: ```\nThe community collectively functions as an Interactive Control and Input Interface, enabling users to engage with various systems through diverse input modalities, including physical gestures, voice commands, and tactile interactions. Typical Inputs: User movements, voice commands, and physical actions; Outputs: Control signals, crafted objects, and visual feedback. Innovative Highlights: Utilizes advanced deep learning models for speech recognition and integrates real-time physical crafting tools, such as 3D printing pens, to create tangible artifacts, setting it apart from conventional input systems. The assigned role: 'sensing_input:direct_input'\n```\nText content: Module: Multimodal_Input_Handler\nRole: sensing_input:direct_input\nFunction: Captures user's touch gestures (t) and voice utterances (s) from the smartphone interface. Touch input can be tapping to reposition the caret or gliding a finger to select text. Voice input is the spoken command or content.\nTechnical Details: Supports common touch input actions provided by Android EditText view. Voice input can start before, during, or after touch actions. The user can signal voice input by tapping/long-clicking text or using a microphone button.\nInput: User touch (tap, glide) and voice utterance.\nOutput: Multimodal input event X = <t, s> (touch input 't', voice input 's').\n--- Context ---\nProceded By: [None]\nFollowed By: ['Speech_Recognizer', 'Operation_Classifier']\n",
+              "source": "Voice and Touch Based Error-tolerant Multimodal Text Editing and Correction for Smartphones"
+            }
+          },
+          {
+            "name": "异常事件识别与归档",
+            "brief_description": "统一处理各类异常上报，生成结构化可追踪异常任务。",
+            "function": "对多模态输入的异常进行分类、去重与关联货物/订单，生成可追踪的异常任务流，供后续任务编排与优先级排序。",
+            "technical_methods": "结合关键词匹配、目标ID识别（如货架/商品码），自动归类异常（缺货、错放、损坏等），并与当前订单和货位状态关联。实现异常事件去重与状态更新，保障异常响应的时效性和唯一性。",
+            "role": "processing",
+            "references": "None",
+            "sub_nodes": [
+              {
+                "name": "异常类型归类",
+                "function": "将输入的异常分为标准类型。",
+                "technical_methods": "基于关键词库和文本分类，对语音/文本描述进行自动类型判别。"
+              },
+              {
+                "name": "异常任务生成",
+                "function": "为每条归类异常生成可追踪的异常任务。",
+                "technical_methods": "提取货物、货架、时间、责任人等元数据，生成标准异常任务记录。"
+              }
+            ],
+            "ports": {
+              "incoming": [
+                {
+                  "source_mod": "多模态异常快速上报输入",
+                  "source_node": null,
+                  "connects_to_internal_node": null,
+                  "edge_label": "结构化异常输入事件"
+                }
+              ],
+              "outgoing": [
+                {
+                  "target_mod": "智能任务优先级动态分析",
+                  "target_node": null,
+                  "originates_from_internal_node": null,
+                  "edge_label": "新增异常任务流"
+                }
+              ],
+              "internal_flow": [
+                {
+                  "source_node": "异常类型归类",
+                  "target_node": "异常任务生成",
+                  "edge_label": "归类后的异常转为任务"
+                }
+              ]
+            },
+            "reference": null
+          },
+          {
+            "name": "智能任务优先级动态分析",
+            "brief_description": "实时分析任务优先级和顺序，动态推荐最优任务流。",
+            "function": "分析当前所有拣货、补货、异常等任务，结合仓库状态、操作员位置、订单紧急度，动态生成最优任务执行序列并实时调整，最大化操作流畅性与效率。",
+            "technical_methods": "核心采用层级有限状态自动机管理任务状态，融合强化学习（如PPO或DQN）实现任务流优选。综合实时位置、订单时效、操作员状态和异常堆积度，以规则和机器学习混合方式动态决策任务排序。支持“人-机”子任务协同分配，确保高优先级任务和易中断任务优先推送。",
+            "role": "processing",
+            "references": "Task_Supervisor,Task_Collaboration",
+            "sub_nodes": [
+              {
+                "name": "任务状态感知",
+                "function": "实时收集任务、仓库、人员与异常状态。",
+                "technical_methods": "对接仓库管理系统，周期性拉取任务队列、货架/库存状态与操作员位置。"
+              },
+              {
+                "name": "优先级排序与动态决策",
+                "function": "依据多维度信息生成最优任务排序。",
+                "technical_methods": "基于多条件决策树+机器学习优化，动态调整任务流并自动插入高优异常/补货任务。"
+              },
+              {
+                "name": "子任务分配与协作建议",
+                "function": "合理划分任务，给出协作建议（如人机分工）。",
+                "technical_methods": "分析任务物理位置、操作员状态与剩余负载，自动分派/建议分工。"
+              }
+            ],
+            "ports": {
+              "incoming": [
+                {
+                  "source_mod": "异常事件识别与归档",
+                  "source_node": null,
+                  "connects_to_internal_node": "任务状态感知",
+                  "edge_label": "异常任务流"
+                },
+                {
+                  "source_mod": "操作员压力自评与节奏反馈",
+                  "source_node": null,
+                  "connects_to_internal_node": "优先级排序与动态决策",
+                  "edge_label": "压力与节奏反馈"
+                }
+              ],
+              "outgoing": [
+                {
+                  "target_mod": "动态可视化任务流程板",
+                  "target_node": null,
+                  "originates_from_internal_node": null,
+                  "edge_label": "优化排序后任务流"
+                }
+              ],
+              "internal_flow": [
+                {
+                  "source_node": "任务状态感知",
+                  "target_node": "优先级排序与动态决策",
+                  "edge_label": "实时状态供排序"
+                },
+                {
+                  "source_node": "优先级排序与动态决策",
+                  "target_node": "子任务分配与协作建议",
+                  "edge_label": "排序结果用于协作建议"
+                }
+              ]
+            },
+            "reference": {
+              "name": "Task_Supervisor",
+              "technical_details": "Module: Task_Supervisor\nSource: Human Decision-Making Modeling and Cooperative Controller Design for Human–Agent Interaction Systems\nCommunity Context: ```\nThe community collectively functions as an Adaptive Decision-Making Framework, integrating advanced reinforcement learning and real-time adaptation strategies to optimize interactions and actions in dynamic environments. Typical Inputs: User touch locations, conversational cues, and environmental data; Outputs: Contextualized actions and adaptive responses for humanoid robots and conversational agents. Innovative Highlights: Utilizes Proximal Policy Optimization and Deep Q-Learning for adaptive learning, alongside advanced event-based control mechanisms to ensure stability and responsiveness in real-time applications. The assigned role: 'processing_core: decision_logic'\n```\nText content: Module: Task_Supervisor\nRole: processing_core:decision_logic\nFunction: Manages the priority of different tasks (human intervention, move-to-target, collision avoidance) using a hierarchical finite state automata supervisor. It determines which task is active based on predefined triggering conditions and human intervention timing.\nTechnical Details: Employs a hierarchical finite state automata supervisor with states S1 (human intervention), S2 (move-to-target), and S3 (collision avoidance). State transitions are governed by conditions Rθ2 (e.g., R1 for collision avoidance, R3 for local minima, R4/R5 for human task completion). It receives TDj to activate human intervention (S1).\nInput: TDj (human intervention timing), xpj (agent position for collision conditions)\nOutput: Task_Priority_Output (active task and its priority)\n--- Context ---\nProceded By: ['HDDM_Threshold']\nFollowed By: ['NSBC']\n",
+              "source": "Human Decision-Making Modeling and Cooperative Controller Design for Human–Agent Interaction Systems"
+            }
+          },
+          {
+            "name": "操作员压力自评与节奏反馈",
+            "brief_description": "操作员可一键反馈压力和节奏，系统自适应调整任务推送。",
+            "function": "为操作员提供简易快速的压力与节奏自评入口（如滑块/表情），系统根据反馈自动调整后续任务推送频率和难度，防止持续超负荷工作。",
+            "technical_methods": "界面呈现可一键评价的压力与节奏选择（如当前舒适/有点快/压力大），后台记录后计算滚动均值及趋势。当压力高于阈值自动降低任务推送频率，必要时弹窗建议休息或临时调岗。反馈数据实时回流到任务排序引擎，影响优先级决策。",
+            "role": "input",
+            "references": "None",
+            "sub_nodes": [],
+            "ports": {
+              "incoming": [],
+              "outgoing": [
+                {
+                  "target_mod": "智能任务优先级动态分析",
+                  "target_node": null,
+                  "originates_from_internal_node": null,
+                  "edge_label": "压力与节奏反馈"
+                }
+              ],
+              "internal_flow": []
+            },
+            "reference": null
+          },
+          {
+            "name": "动态可视化任务流程板",
+            "brief_description": "以图形化界面高亮展示任务、优先级与异常提醒。",
+            "function": "将当前任务列表、状态、优先级变化和异常事件以可视化方式（如甘特图、任务卡片、状态高亮）实时展示，支持交互查看详情、异常一键跳转，显著降低认知负担。",
+            "technical_methods": "基于Web（D3.js/HTML5）或App原生实现，实时渲染任务序列，异常任务高亮提示，支持多种视图切换（列表、时间轴、热力图等）。与输入端联动，允许操作员点击任务查看详情或一键上报新异常。任务状态与优先级变动采用动画/色彩高亮反馈，增强信息直观性。",
+            "role": "output",
+            "references": "Display_Interface,Overview_Dashboard",
+            "sub_nodes": [
+              {
+                "name": "任务与优先级展示",
+                "function": "清晰展示所有任务及排序优先级。",
+                "technical_methods": "使用颜色、排序、图标等多维度视觉编码，辅以动态刷新。"
+              },
+              {
+                "name": "异常与堆积高亮提醒",
+                "function": "对异常和任务堆积情况进行高亮及弹窗提示。",
+                "technical_methods": "异常任务以警告色标注，并可点击快速查看/处理。"
+              },
+              {
+                "name": "交互式详情与快捷操作",
+                "function": "支持点击任务卡片查看详情或一键触发异常上报等操作。",
+                "technical_methods": "交互式UI组件，数据联动至多模态上报入口。"
+              }
+            ],
+            "ports": {
+              "incoming": [
+                {
+                  "source_mod": "智能任务优先级动态分析",
+                  "source_node": null,
+                  "connects_to_internal_node": "任务与优先级展示",
+                  "edge_label": "优化排序后任务流"
+                }
+              ],
+              "outgoing": [
+                {
+                  "target_mod": "多模态异常快速上报输入",
+                  "target_node": null,
+                  "originates_from_internal_node": "交互式详情与快捷操作",
+                  "edge_label": "一键异常上报入口"
+                },
+                {
+                  "target_mod": "操作员压力自评与节奏反馈",
+                  "target_node": null,
+                  "originates_from_internal_node": null,
+                  "edge_label": "压力自评快捷入口"
+                }
+              ],
+              "internal_flow": [
+                {
+                  "source_node": "任务与优先级展示",
+                  "target_node": "异常与堆积高亮提醒",
+                  "edge_label": "异常高亮传递"
+                },
+                {
+                  "source_node": "异常与堆积高亮提醒",
+                  "target_node": "交互式详情与快捷操作",
+                  "edge_label": "弹窗至交互入口"
+                }
+              ]
+            },
+            "reference": {
+              "name": "Display_Interface",
+              "technical_details": "Module: Display_Interface\nSource: Effect of Imperfect Information and Action Automation on Attentional Allocation\nCommunity Context: ```\nThe community collectively functions as an Augmented Reality Visualization and Interaction Suite, enabling dynamic display and manipulation of 3D models across various applications, from cultural artifacts to human poses. Typical Inputs: 3D model data, user interactions; Outputs: Interactive visual representations and real-time feedback on 3D designs. Innovative Highlights: Utilizes close-range photogrammetry for high-fidelity model rendering and integrates advanced AR techniques for synchronized visual overlays and real-time pose manipulation, setting it apart from conventional 3D display systems. The assigned role: 'interface_output:gui_display'\n```\nText content: Module: Display_Interface\nRole: interface_output:gui_display\nFunction: Presents the visual output of the MATB simulation environment to the human operator, including the states of the tracking, resources management, and system monitoring tasks, as well as the 'Warning' signal from the information automation.\nTechnical Details: A 17-inch monitor (1440 x 900 pixels) displaying the OpenMATB interface. The 'Warning' button turns red when information automation is functioning and a gauge failure occurs.\nInput: Tracking_Task_Visual_State (from OpenMATB_Simulation), Resources_Management_Visual_State (from OpenMATB_Simulation), Monitoring_Task_Visual_State (from OpenMATB_Simulation), Warning_Signal (from Information_Automation_System)\nOutput: Visual_Feedback_to_Human (to Human Operator - implicit)\n--- Context ---\nProceded By: ['OpenMATB_Simulation', 'Information_Automation_System']\nFollowed By: [None]\n",
+              "source": "Effect of Imperfect Information and Action Automation on Attentional Allocation"
+            }
+          },
+          {
+            "name": "任务执行与状态反馈",
+            "brief_description": "操作员按任务指引完成操作，并实时反馈进展状态。",
+            "function": "指导操作员按推荐顺序执行拣货、补货、异常处理任务，提供任务完成、暂停、遇阻等多状态反馈按钮，实现任务闭环。",
+            "technical_methods": "每个任务节点均有“完成/暂停/失败/异常”一键反馈入口。状态变化自动同步至后端，实时更新任务流与优先级决策。支持扫码/拍照确认任务完成，提升数据可靠性。",
+            "role": "input",
+            "references": "None",
+            "sub_nodes": [],
+            "ports": {
+              "incoming": [
+                {
+                  "source_mod": "动态可视化任务流程板",
+                  "source_node": null,
+                  "connects_to_internal_node": null,
+                  "edge_label": "任务详情与操作入口"
+                }
+              ],
+              "outgoing": [
+                {
+                  "target_mod": "智能任务优先级动态分析",
+                  "target_node": null,
+                  "originates_from_internal_node": null,
+                  "edge_label": "最新任务状态与反馈"
+                }
+              ],
+              "internal_flow": []
+            },
+            "reference": null
+          }
+        ]
+      }
+
 // Extract top N processing modules from node_details for plan preview
 function getProcessingModules(nodeDetails, maxCount = 3) {
   if (!nodeDetails) return [];
@@ -137,9 +430,9 @@ function App() {
   const [testJsonStr, setTestJsonStr] = useState('');
   const [planThumbnails, setPlanThumbnails] = useState({});
 
-  const handleTestJson = () => {
+  const handleTestJson = (overrideStr) => {
     try {
-      const json = JSON.parse(testJsonStr);
+      const json = JSON.parse(overrideStr !== undefined ? overrideStr : testJsonStr);
       let details;
       if (json.module_details) {
         details = json.module_details;
@@ -1362,7 +1655,7 @@ function App() {
                     transition: 'width 0.5s ease'
                   }} />
                 )}
-                {loading ? `${progressText} ${progress}%` : '开始生成流程图'}
+                {loading ? `${progressText} ${progress}%` : '开始生成'}
               </button>
             </div>
 
@@ -1373,13 +1666,17 @@ function App() {
                 rows={4}
                 value={testJsonStr}
                 onChange={(e) => setTestJsonStr(e.target.value)}
-                placeholder='在此粘贴包含 module_details 的 arch_plan 直接渲染'
+                placeholder={JSON.stringify(plan_placeholder)}
                 spellCheck="false"
               />
               <button
                 className="btn-primary"
                 style={{ marginTop: '10px', backgroundColor: '#f39c12', border: 'none' }}
-                onClick={handleTestJson}
+                onClick={() => {
+                  const str = testJsonStr.trim() ? testJsonStr : JSON.stringify(plan_placeholder);
+                  if (!testJsonStr.trim()) setTestJsonStr(str);
+                  handleTestJson(str);
+                }}
               >
                 直接渲染测试
               </button>
@@ -1548,7 +1845,7 @@ function App() {
             {viewMode === 'edit' && divergentPerspectives.length === 0 && plans.length === 0 && (
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ccc', flexDirection: 'column', gap: '8px' }}>
                 <div style={{ fontSize: '36px' }}>💡</div>
-                <div style={{ fontSize: '14px', color: '#aaa' }}>生成方案后将在此处展示三个设计视角</div>
+                <div style={{ fontSize: '14px', color: '#aaa' }}>此处将展示三个不同的设计视角</div>
               </div>
             )}
 
