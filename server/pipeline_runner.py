@@ -13,16 +13,16 @@ from agents import (
     IntegratorAgent,
     ConflictSolver,
     EditorAgent,
-    client
+    get_client,
 )
 from retriever_neo4j import get_global_stores
 from session_manager import create_initial_plan, create_modified_plan, get_session_tree, get_plan_lineage
 
 def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, divergence=True, session_id=None):
     vector_store, graph_store = get_global_stores()
-    planner = PlannerAgent(client, graph_store)
-    retriever = RetrieverAgent(vector_store, graph_store, client)
-    integrator = IntegratorAgent(client)
+    planner = PlannerAgent(get_client(), graph_store)
+    retriever = RetrieverAgent(vector_store, graph_store, get_client())
+    integrator = IntegratorAgent(get_client())
     solver = ConflictSolver() # Initialize Solver
     
     yield json.dumps({"type": "progress", "message": "Searching knowledge base...", "percent": 15}) + "\n"
@@ -275,13 +275,13 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
 
 def run_edit_pipeline(plan_id, current_plan_json, user_instruction, original_query, session_id=None, referenced_modules=None):
     # Initialize agents
-    integrator = IntegratorAgent(client)
+    integrator = IntegratorAgent(get_client())
     solver = ConflictSolver()
-    editor = EditorAgent(client)
-    
+    editor = EditorAgent(get_client())
+
     # Initialize retriever for tool use
     vector_store, graph_store = get_global_stores()
-    retriever = RetrieverAgent(vector_store, graph_store, client)
+    retriever = RetrieverAgent(vector_store, graph_store, get_client())
 
     if plan_id:
         print(f"User requested modification on parent node: {plan_id}")

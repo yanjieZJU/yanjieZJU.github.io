@@ -4,6 +4,8 @@ import httpx
 import json
 import sys
 import os
+import itertools
+import threading
 from openai import OpenAI
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
@@ -22,12 +24,29 @@ from retriever_neo4j import (
     execute_read_with_session
 )
 
-http_client = httpx.Client(proxy=None, trust_env=False)
-client = OpenAI(
-    http_client=http_client,
-    api_key=os.environ.get("OPENAI_API_KEY"),
-    base_url=os.environ.get("OPENAI_BASE_URL")
-    )
+# === Round-robin client pool ===
+# One OpenAI client per key; concurrent requests rotate through the pool
+# so no single key absorbs all traffic.
+# To add keys: edit OPENAI_API_KEYS in config.py.
+_http_client = httpx.Client(proxy=None, trust_env=False)
+_base_url = os.environ.get("OPENAI_BASE_URL")
+_keys = OPENAI_API_KEYS if OPENAI_API_KEYS else [os.environ.get("OPENAI_API_KEY")]
+_client_pool = [
+    OpenAI(http_client=_http_client, api_key=k, base_url=_base_url)
+    for k in _keys
+]
+_pool_iter = itertools.cycle(range(len(_client_pool)))
+_pool_lock = threading.Lock()
+
+def get_client() -> OpenAI:
+    """Return the next client in round-robin order (thread-safe)."""
+    with _pool_lock:
+        idx = next(_pool_iter)
+    return _client_pool[idx]
+
+
+print(f"✅ OpenAI client pool: {len(_client_pool)} key(s) at {_base_url}")
+
 
 # Global cache for cluster embeddings to avoid recomputation
 CLUSTER_EMBEDDINGS_CACHE = {}
@@ -1071,7 +1090,10 @@ Use compact string format for `ports` to save space:
         for mod in vals:
             m_name = mod.get("name", "Unknown")
             ref_str = mod.get("references", "")
-            if ref_str and ref_str.lower() != "none":
+            # LLM may return references as a list instead of a comma-separated string
+            if isinstance(ref_str, list):
+                ref_str = ", ".join(str(r) for r in ref_str)
+            if ref_str and str(ref_str).lower() != "none":
                 # Split by comma
                 refs = [r.strip() for r in ref_str.split(",")]
                 for r in refs:
@@ -1200,6 +1222,52 @@ class EditorAgent:
                 pass
 
         # Slim down the plan for the editor prompt: drop heavy fields not needed for decision-making
+        def _ports_to_compact(ports):
+            """Convert expanded port objects back to compact string format for the LLM prompt."""
+            if not isinstance(ports, dict):
+                return ports
+            compact = {}
+
+            incoming = []
+            for edge in ports.get("incoming", []):
+                if isinstance(edge, str):
+                    incoming.append(edge)
+                    continue
+                src = edge.get("source_mod", "")
+                src_node = edge.get("source_node") or edge.get("connects_to_internal_node")
+                label = edge.get("edge_label", "")
+                prefix = f"{src}.{src_node}" if src_node else src
+                incoming.append(f"{prefix}->{label}" if label else prefix)
+            if incoming:
+                compact["incoming"] = incoming
+
+            outgoing = []
+            for edge in ports.get("outgoing", []):
+                if isinstance(edge, str):
+                    outgoing.append(edge)
+                    continue
+                tgt = edge.get("target_mod", "")
+                tgt_node = edge.get("target_node") or edge.get("originates_from_internal_node")
+                label = edge.get("edge_label", "")
+                prefix = f"{tgt}.{tgt_node}" if tgt_node else tgt
+                outgoing.append(f"{prefix}->{label}" if label else prefix)
+            if outgoing:
+                compact["outgoing"] = outgoing
+
+            internal = []
+            for flow in ports.get("internal_flow", []):
+                if isinstance(flow, str):
+                    internal.append(flow)
+                    continue
+                src_n = flow.get("source_node", "")
+                tgt_n = flow.get("target_node", "")
+                label = flow.get("edge_label", "")
+                internal.append(f"{src_n}->{tgt_n}->{label}" if label else f"{src_n}->{tgt_n}")
+            if internal:
+                compact["internal_flow"] = internal
+
+            return compact
+
         def _slim_plan(plan):
             if not isinstance(plan, dict):
                 return plan
@@ -1209,7 +1277,10 @@ class EditorAgent:
                 mds = list(mds.values())
             slim_mds = []
             for m in mds:
-                slim_mds.append({k: m[k] for k in ["name", "brief_description", "role", "ports", "sub_nodes"] if k in m})
+                entry = {k: m[k] for k in ["name", "brief_description", "role", "sub_nodes"] if k in m}
+                if "ports" in m:
+                    entry["ports"] = _ports_to_compact(m["ports"])
+                slim_mds.append(entry)
             slim["module_details"] = slim_mds
             return slim
 
@@ -1555,16 +1626,30 @@ class EditorAgent:
                     else:
                         print(f"⚠️  Reflection: unchanged node '{name}' not found in original, skipping.")
                 elif ct == "ports_only":
-                    # Take original node but overwrite ports
+                    # Take original node but overwrite ports.
+                    # LLM may output compact string format ("ModA->label") — expand first.
+                    raw_ports_entry = json.dumps({"module_details": [{"ports": entry.get("ports", {})}]}, ensure_ascii=False)
+                    expanded_str = _expand_compact_ports(raw_ports_entry)
+                    try:
+                        expanded_ports = json.loads(expanded_str)["module_details"][0]["ports"]
+                    except Exception:
+                        expanded_ports = entry.get("ports", {})
                     if name in orig_lookup:
                         restored = dict(orig_lookup[name])
-                        restored["ports"] = entry.get("ports", restored.get("ports", {}))
+                        restored["ports"] = expanded_ports
                         merged.append(restored)
                     else:
                         # New node with only ports? Keep as-is (shouldn't happen)
                         merged.append(entry)
                 else:
-                    # added or modified: use as-is
+                    # added or modified: expand compact ports before using
+                    if "ports" in entry and entry["ports"]:
+                        raw = json.dumps({"module_details": [{"ports": entry["ports"]}]}, ensure_ascii=False)
+                        try:
+                            expanded_ports = json.loads(_expand_compact_ports(raw))["module_details"][0]["ports"]
+                            entry = {**entry, "ports": expanded_ports}
+                        except Exception:
+                            pass
                     merged.append(entry)
 
             # Restore any nodes completely missing from diff (silently dropped)

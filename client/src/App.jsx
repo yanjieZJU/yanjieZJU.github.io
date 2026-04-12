@@ -15,6 +15,7 @@ import 'reactflow/dist/style.css';
 const API_BASE = import.meta.env.DEV ? 'http://localhost:8000' : '/api';
 
 const plan_placeholder =  {
+        "perspective": "多模态异常上报型",
         "overall_description": "本系统为现代化物流仓库一线操作员打造高流畅度、低中断的智能拣货补货协作工作流。其核心创新体现在多模态异常一键上报、智能任务优先级排序、动态任务可视化、操作员实时压力反馈四大能力的深度融合，通过智能排序与视觉引导，动态适配仓库现场状态和操作员工作节奏，有效减少任务打断、优先级混乱与异常积压，全面提升拣补货高峰期的作业效率与体验。",
         "module_details": [
           {
@@ -307,6 +308,132 @@ const plan_placeholder =  {
         ]
       }
 
+const plan_placeholder2 = {
+  "perspective": "智能调度优先型",
+  "overall_description": "本系统以智能任务调度与动态优先级引擎为核心，为仓库一线操作员提供高效的拣货补货决策支持。通过实时感知仓库状态、操作员位置与任务积压情况，动态重排任务队列，最大化作业吞吐量，减少空走路程与等待时间，同时以简洁的可视化界面让操作员始终掌握任务全局视野。",
+  "module_details": [
+    {
+      "name": "实时仓库状态感知",
+      "brief_description": "持续采集货架、库存、操作员位置等实时数据，作为调度决策的输入源。",
+      "function": "通过IoT传感器、扫码记录和操作员位置追踪，实时构建仓库状态快照，为调度引擎提供决策基础数据。",
+      "technical_methods": "集成RFID/条码扫描事件流、操作员手持设备GPS/蓝牙定位、货架重量传感器数据，统一接入消息队列，以100ms级延迟更新状态快照。",
+      "role": "input",
+      "references": "Warehouse_State_Monitor,IoT_Integration",
+      "sub_nodes": [
+        {
+          "name": "操作员位置追踪",
+          "function": "实时获取每位操作员在仓库中的位置。",
+          "technical_methods": "蓝牙信标+手持设备融合定位，精度2米以内。"
+        },
+        {
+          "name": "库存变动监听",
+          "function": "监听拣货、补货、退货等事件引起的库存变化。",
+          "technical_methods": "订阅WMS库存变动事件流，实时同步至状态快照。"
+        }
+      ],
+      "ports": {
+        "incoming": [],
+        "outgoing": [
+          {
+            "target_mod": "智能任务调度引擎",
+            "target_node": null,
+            "originates_from_internal_node": null,
+            "edge_label": "仓库状态快照"
+          }
+        ],
+        "internal_flow": [
+          {
+            "source_node": "操作员位置追踪",
+            "target_node": "库存变动监听",
+            "edge_label": "位置与库存联合更新"
+          }
+        ]
+      }
+    },
+    {
+      "name": "智能任务调度引擎",
+      "brief_description": "动态计算最优任务分配方案，最小化路径与等待时间。",
+      "function": "综合任务紧急度、操作员位置、货架距离等因素，实时生成最优任务队列，并在状态变化时自动重调度。",
+      "technical_methods": "采用贪心+动态规划混合算法进行任务路径优化，支持软硬约束配置（如优先级锁定、区域隔离）。调度结果以差量推送方式下发至操作员终端，避免全量刷新。",
+      "role": "processing_core",
+      "references": "Task_Scheduler,Priority_Engine",
+      "sub_nodes": [
+        {
+          "name": "优先级评分模块",
+          "function": "为每个待处理任务计算综合优先级分数。",
+          "technical_methods": "加权评分：订单截止时间权重40%，货架距离权重30%，任务类型权重30%。"
+        },
+        {
+          "name": "路径优化模块",
+          "function": "在优先级排序基础上进一步优化拣货路径，减少空走。",
+          "technical_methods": "改良TSP算法，结合仓库通道地图实时计算最短可行路径。"
+        }
+      ],
+      "ports": {
+        "incoming": [
+          {
+            "source_mod": "实时仓库状态感知",
+            "source_node": null,
+            "edge_label": "仓库状态快照"
+          }
+        ],
+        "outgoing": [
+          {
+            "target_mod": "任务可视化与操作员界面",
+            "target_node": null,
+            "originates_from_internal_node": null,
+            "edge_label": "优化后任务队列"
+          }
+        ],
+        "internal_flow": [
+          {
+            "source_node": "优先级评分模块",
+            "target_node": "路径优化模块",
+            "edge_label": "优先级排序结果"
+          }
+        ]
+      }
+    },
+    {
+      "name": "任务可视化与操作员界面",
+      "brief_description": "以清晰直观的方式将调度结果呈现给操作员，支持快速确认与反馈。",
+      "function": "将调度结果以列表、地图、进度条等多维方式展示，操作员可查看当前任务、下一任务及全局进度，并可标记完成或反馈异常。",
+      "technical_methods": "React Native移动端应用，WebSocket实时接收任务更新推送，支持离线缓存保障弱网下可用。地图视图基于仓库SVG底图叠加动态任务标注。",
+      "role": "output",
+      "references": "Task_Visualization,Operator_UI",
+      "sub_nodes": [
+        {
+          "name": "任务列表视图",
+          "function": "显示操作员当前待完成任务的有序列表。",
+          "technical_methods": "优先级排序列表，支持滑动完成手势与一键跳过。"
+        },
+        {
+          "name": "仓库地图导航",
+          "function": "在仓库地图上高亮标注下一目标货架位置。",
+          "technical_methods": "SVG矢量仓库地图，动态绘制推荐路径箭头。"
+        }
+      ],
+      "ports": {
+        "incoming": [
+          {
+            "source_mod": "智能任务调度引擎",
+            "source_node": null,
+            "edge_label": "优化后任务队列"
+          }
+        ],
+        "outgoing": [],
+        "internal_flow": [
+          {
+            "source_node": "任务列表视图",
+            "target_node": "仓库地图导航",
+            "edge_label": "当前任务定位"
+          }
+        ]
+      }
+    }
+  ]
+};
+
 // Extract top N processing modules from node_details for plan preview
 function getProcessingModules(nodeDetails, maxCount = 3) {
   if (!nodeDetails) return [];
@@ -433,28 +560,23 @@ function App() {
   const handleTestJson = (overrideStr) => {
     try {
       const json = JSON.parse(overrideStr !== undefined ? overrideStr : testJsonStr);
-      let details;
-      if (json.module_details) {
-        details = json.module_details;
-      } else {
-        details = json;
-      }
+      const items = Array.isArray(json) ? json : [json];
+      const testPlans = items.map((item, i) => {
+        const details = item.module_details || item;
+        return {
+          perspective: item.perspective || `测试方案${i + 1}`,
+          description: item.overall_description || item.description || '测试生成的方案',
+          node_details: details,
+          mermaid_code: item.mermaid_code || '',
+          plan_id: item.plan_id || `test-plan-${Date.now()}-${i}`,
+          history: item.history || [],
+          used_references: item.used_references || {}
+        };
+      });
 
-      // 创建完整的计划对象，包括必要的字段
-      const testPlan = {
-        perspective: json.perspective || '快速测试版',
-        description: json.overall_description || json.description || '测试生成的方案',
-        node_details: details,
-        mermaid_code: json.mermaid_code || '',
-        // 添加必要的字段以匹配正常的计划结构
-        plan_id: json.plan_id || `test-plan-${Date.now()}`,
-        history: json.history || [],
-        used_references: json.used_references || {}
-      };
-
-      setPlans([testPlan]);
+      setPlans(testPlans);
       setActivePlanIndex(0);
-      setNodeDetails(details);
+      setNodeDetails(testPlans[0].node_details);
       setViewMode('result');
       setTestJsonStr('');
     } catch (err) {
@@ -768,6 +890,7 @@ function App() {
     if (!description && nodes.length === 0) { console.log('[DEBUG] early return — empty'); return; }
     setLoading(true);
     setProgress(0);
+    setViewMode('edit');
     setPlans([]);
     setNodeDetails({});
     nodeDetailsSigRef.current = '';
@@ -1273,6 +1396,9 @@ function App() {
     setProgress(0);
     setProgressText('Generating Document...');
     try {
+      // Auto-save snapshot before exporting
+      await saveSnapshotToSessionTree(undefined, '已保存当前架构（导出前自动保存）', '');
+
       // 1. Capture React Flow component to PNG
       const dataUrl = await resultFlowRef.current.exportImage();
 
@@ -1673,7 +1799,7 @@ function App() {
                 className="btn-primary"
                 style={{ marginTop: '10px', backgroundColor: '#f39c12', border: 'none' }}
                 onClick={() => {
-                  const str = testJsonStr.trim() ? testJsonStr : JSON.stringify(plan_placeholder);
+                  const str = testJsonStr.trim() ? testJsonStr : JSON.stringify([plan_placeholder, plan_placeholder2]);
                   if (!testJsonStr.trim()) setTestJsonStr(str);
                   handleTestJson(str);
                 }}

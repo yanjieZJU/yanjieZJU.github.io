@@ -4,6 +4,15 @@ import os
 os.environ["OPENAI_API_KEY"] = "sk-y44HwiOqlzdvdMwiVGmyzpITjGQdkwWS0bJuDMWN2awpHnX7"
 os.environ["OPENAI_BASE_URL"] = "https://poloai.top/v1"
 
+# === Multi-Key Pool (round-robin load balancing) ===
+# Add more keys here to distribute concurrent requests across accounts.
+# All keys must work with the same OPENAI_BASE_URL above.
+OPENAI_API_KEYS = [
+    "sk-y44HwiOqlzdvdMwiVGmyzpITjGQdkwWS0bJuDMWN2awpHnX7",
+    "sk-HOhPpbrbpl2pEa9UU6BGea6I2O93cLYX1eS342bLaMypwvlc",
+    # "sk-THIRD_KEY_HERE",
+]
+
 # === Model Configuration ===
 # Change this one line to switch models across the entire backend
 CHAT_MODEL = "gpt-5.4-mini"

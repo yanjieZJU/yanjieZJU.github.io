@@ -162,18 +162,16 @@ function computeTopologicalLevels(topNodes, edges, childToParent) {
     if (!order.includes(n.id)) order.push(n.id);
   });
 
-  // Compute level for ALL nodes based on topological order
   const levelMap = {};
   order.forEach(id => {
-    const upstreamLevels = incoming[id]
-      .map(up => levelMap[up] ?? 0);
+    const upstreamLevels = incoming[id].map(up => levelMap[up] ?? 0);
     levelMap[id] = upstreamLevels.length > 0 ? Math.max(...upstreamLevels) + 1 : 0;
   });
 
   return levelMap;
 }
 
-function runRoleLayout(nodes, edges) {
+function runRoleLayout(nodes, edges, preservedPositions = {}) {
   const positions = {};
   const topNodes = nodes.filter(n => !n.parent);
   const childToParent = {};
@@ -286,54 +284,113 @@ function runRoleLayout(nodes, edges) {
   });
   const maxColH = Math.max(...Object.values(colHeights), 0);
 
-  // Place flow nodes: each column centered vertically
+  // Place flow nodes: preserve existing positions; append new nodes below existing ones in their column
   const FLOW_TOP = 40;
   levels.forEach(lvl => {
     const group = levelGroups[lvl];
-    const colH = colHeights[lvl];
-    let y = FLOW_TOP + (maxColH - colH) / 2;
+    const x0 = colX[lvl];
+    const colW = colWidths[lvl];
+
+    // First pass: restore preserved positions for existing nodes
     group.forEach(n => {
       const { w, h, overlayTop } = nodeDims[n.id];
-      // Center node horizontally within its column
-      const x = colX[lvl] + (colWidths[lvl] - w) / 2;
-      positions[n.id] = { x, y, w, h, overlayTop };
-      y += h + ROW_GAP;
+      if (preservedPositions[n.id]) {
+        positions[n.id] = { x: preservedPositions[n.id].x, y: preservedPositions[n.id].y, w, h, overlayTop };
+      }
+    });
+
+    // Find the bottom edge of all already-placed nodes in this column
+    let colBottomY = FLOW_TOP;
+    group.forEach(n => {
+      if (positions[n.id]) {
+        colBottomY = Math.max(colBottomY, positions[n.id].y + positions[n.id].h + ROW_GAP);
+      }
+    });
+
+    // Second pass: place new nodes (no preserved position) below existing ones
+    group.forEach(n => {
+      if (positions[n.id]) return; // already placed
+      const { w, h, overlayTop } = nodeDims[n.id];
+      const x = x0 + (colW - w) / 2;
+      positions[n.id] = { x, y: colBottomY, w, h, overlayTop };
+      colBottomY += h + ROW_GAP;
     });
   });
 
-  // Place data nodes as a horizontal row below the flow nodes
+  // Place data nodes as a horizontal row below all flow nodes
   if (dataNodes.length > 0) {
-    const dataRowTop = FLOW_TOP + maxColH + DATA_ROW_GAP;
-    const totalFlowWidth = curX - COL_GAP - 60; // total width of flow area
-    const totalDataW = dataNodes.reduce((sum, n) => sum + nodeDims[n.id].w, 0)
-      + 40 * (dataNodes.length - 1);
-    let dataX = 60 + (totalFlowWidth - totalDataW) / 2;
+    // Find the actual bottom of all placed flow nodes
+    let flowBottom = FLOW_TOP;
+    flowNodes.forEach(n => {
+      if (positions[n.id]) {
+        flowBottom = Math.max(flowBottom, positions[n.id].y + positions[n.id].h);
+      }
+    });
+    const dataRowTop = flowBottom + DATA_ROW_GAP;
+
+    // Find the rightmost edge of already-placed data nodes to append new ones after them
+    let dataAppendX = 60;
+    dataNodes.forEach(n => {
+      if (preservedPositions[n.id]) {
+        dataAppendX = Math.max(dataAppendX, preservedPositions[n.id].x + (nodeDims[n.id]?.w || NODE_W) + 40);
+      }
+    });
+
     dataNodes.forEach(n => {
       const { w, h, overlayTop } = nodeDims[n.id];
-      positions[n.id] = { x: dataX, y: dataRowTop, w, h, overlayTop };
-      dataX += w + 40;
+      if (preservedPositions[n.id]) {
+        positions[n.id] = { x: preservedPositions[n.id].x, y: preservedPositions[n.id].y, w, h, overlayTop };
+      } else {
+        positions[n.id] = { x: dataAppendX, y: dataRowTop, w, h, overlayTop };
+        dataAppendX += w + 40;
+      }
     });
   }
 
   // Place child nodes inside their parents
-  nodes.filter(n => n.parent).forEach((n) => {
-    const parentPos = positions[n.parent] || { x: 0, y: 0, w: GROUP_W, h: 160, overlayTop: 60 };
-    const siblings = nodes.filter(s => s.parent === n.parent).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  const childrenByParent = {};
+  nodes.filter(n => n.parent).forEach(n => {
+    if (!childrenByParent[n.parent]) childrenByParent[n.parent] = [];
+    childrenByParent[n.parent].push(n);
+  });
+
+  Object.entries(childrenByParent).forEach(([parentId, children]) => {
+    const parentPos = positions[parentId] || { x: 0, y: 0, w: GROUP_W, h: 160, overlayTop: 60 };
+    const sorted = children.sort((a, b) => String(a.id).localeCompare(String(b.id)));
     const overlayTop = parentPos.overlayTop || 60;
     const padding = 16;
 
-    let currentY = parentPos.y + overlayTop + padding;
-    for (let i = 0; i < siblings.length; i++) {
-      const s = siblings[i];
-      if (s.id === n.id) break;
-      currentY += (subnodeDims[s.id]?.h || NODE_H) + childGap;
-    }
-    positions[n.id] = {
-      x: parentPos.x + (parentPos.w - NODE_W) / 2,
-      y: currentY,
-      w: NODE_W,
-      h: subnodeDims[n.id]?.h || NODE_H,
-    };
+    // First pass: restore preserved positions for existing children
+    sorted.forEach(n => {
+      if (preservedPositions[n.id]) {
+        positions[n.id] = {
+          x: preservedPositions[n.id].x,
+          y: preservedPositions[n.id].y,
+          w: NODE_W,
+          h: subnodeDims[n.id]?.h || NODE_H,
+        };
+      }
+    });
+
+    // Find the bottom of already-placed children
+    let childBottomY = parentPos.y + overlayTop + padding;
+    sorted.forEach(n => {
+      if (positions[n.id]) {
+        childBottomY = Math.max(childBottomY, positions[n.id].y + (positions[n.id].h || NODE_H) + childGap);
+      }
+    });
+
+    // Second pass: place new children below existing ones
+    sorted.forEach(n => {
+      if (positions[n.id]) return;
+      positions[n.id] = {
+        x: parentPos.x + (parentPos.w - NODE_W) / 2,
+        y: childBottomY,
+        w: NODE_W,
+        h: subnodeDims[n.id]?.h || NODE_H,
+      };
+      childBottomY += (subnodeDims[n.id]?.h || NODE_H) + childGap;
+    });
   });
 
   return { positions, levelMap, childToParent };
@@ -627,7 +684,7 @@ function graphToNodeDetails(graph, originalNodeDetails, collapsedMap = new Map()
 
 // ─── Render nodes+edges into an existing graph instance ──────────────────────
 function renderGraph(graph, nodeDetails, options = {}) {
-  const { collapsedMap = new Map(), skipZoom = false } = options;
+  const { collapsedMap = new Map(), skipZoom = false, preservedPositions = {} } = options;
   try {
     const t = Array.isArray(nodeDetails) ? 'array' : typeof nodeDetails;
     const n = Array.isArray(nodeDetails) ? nodeDetails.length : (nodeDetails ? Object.keys(nodeDetails).length : 0);
@@ -667,7 +724,7 @@ function renderGraph(graph, nodeDetails, options = {}) {
   let levelMap = {};
   let childToParent = {};
   try {
-    const layout = runRoleLayout(parsedNodes, parsedEdges);
+    const layout = runRoleLayout(parsedNodes, parsedEdges, preservedPositions);
     positions = layout.positions;
     levelMap = layout.levelMap || {};
     childToParent = layout.childToParent || {};
@@ -1106,6 +1163,8 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
   const onNodeClickRef = useRef(onNodeClick);
   const onPaneClickRef = useRef(onPaneClick);
   const onNodeDetailsChangeRef = useRef(onNodeDetailsChange);
+  // Persists node positions across re-renders; updated on drag and after each layout
+  const savedPositionsRef = useRef({});
   const pendingRenderRef = useRef(null);  // Queues data that arrived before graph was ready
   const [collapsedModules, setCollapsedModules] = useState(new Map()); // Track per-module collapse state
   const collapsedModulesRef = useRef(collapsedModules); // Ref so closures always see latest value
@@ -1204,6 +1263,10 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
     graph.on('node:change:position', ({ node }) => {
       const id = String(node?.id || '');
       if (id.endsWith('__hdr') || id.endsWith('__sub') || id.endsWith('__ico') || id.endsWith('__toggle')) return;
+      // Persist position so layout can restore it on next re-render
+      const pos = node.getPosition();
+      const size = node.getSize();
+      if (pos) savedPositionsRef.current[id] = { x: pos.x, y: pos.y, w: size?.width, h: size?.height };
       const parent = node.getParent && node.getParent();
       if (parent && parent.isNode && parent.isNode()) {
         // Child node moved inside group — clamp to boundaries
@@ -1477,6 +1540,7 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
             }
           });
           setCollapsedModules(initialCollapsed);
+          savedPositionsRef.current = {}; // fresh plan — start with no preserved positions
           renderGraph(g, detailsToRender, { collapsedMap: initialCollapsed });
         } finally {
           isRenderingRef.current = false;
@@ -1526,7 +1590,25 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
     }
     isRenderingRef.current = true;
     try {
-      renderGraph(graphRef.current, nodeDetails, { collapsedMap: collapsedModules, skipZoom: false });
+      // If most node ids are new (plan switch), clear saved positions so layout runs fresh.
+      const incomingIds = new Set(
+        (Array.isArray(nodeDetails) ? nodeDetails : Object.values(nodeDetails || {}))
+          .map(m => m?.id || m?.name).filter(Boolean)
+      );
+      const savedIds = Object.keys(savedPositionsRef.current);
+      const overlap = savedIds.filter(id => incomingIds.has(id)).length;
+      if (savedIds.length > 0 && overlap < incomingIds.size * 0.5) {
+        savedPositionsRef.current = {}; // plan switch — start fresh
+      }
+      renderGraph(graphRef.current, nodeDetails, { collapsedMap: collapsedModules, skipZoom: false, preservedPositions: savedPositionsRef.current });
+      // Save positions after layout so future re-renders preserve them
+      graphRef.current.getNodes().forEach(cell => {
+        const id = String(cell.id || '');
+        if (id.endsWith('__hdr') || id.endsWith('__sub') || id.endsWith('__ico') || id.endsWith('__toggle')) return;
+        const pos = cell.getPosition();
+        const size = cell.getSize();
+        if (pos) savedPositionsRef.current[id] = { x: pos.x, y: pos.y, w: size?.width, h: size?.height };
+      });
     } finally {
       isRenderingRef.current = false;
     }
@@ -1545,7 +1627,7 @@ const X6FlowViewer = forwardRef(function X6FlowViewer(
 
     isRenderingRef.current = true;
     try {
-      renderGraph(g, nodeDetailsRef.current, { collapsedMap: collapsedModules, skipZoom: true });
+      renderGraph(g, nodeDetailsRef.current, { collapsedMap: collapsedModules, skipZoom: true, preservedPositions: savedPositionsRef.current });
     } finally {
       isRenderingRef.current = false;
     }
