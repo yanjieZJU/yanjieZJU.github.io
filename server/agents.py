@@ -1053,7 +1053,7 @@ Use compact string format for `ports` to save space:
         Return the FULLY CORRECTED JSON object.
         """
         import time
-        for _attempt in range(3):
+        for _attempt in range(2):
             try:
                 response = self.client.chat.completions.create(
                     model=CHAT_MODEL,
@@ -1064,7 +1064,7 @@ Use compact string format for `ports` to save space:
                 return response
             except Exception as e:
                 print(f"Error checking integrity (attempt {_attempt+1}): {e}")
-                if _attempt < 2:
+                if _attempt < 1:
                     time.sleep(3 * (_attempt + 1))
         return current_arch
 
@@ -1425,18 +1425,30 @@ class EditorAgent:
         
         while current_step < max_steps:
             current_step += 1
-            
+
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    tools=tools,
-                    tool_choice="auto",
-                    response_format={"type": "json_object"}
-                )
-                
+                # Only pass response_format when not using tools, as some APIs
+                # do not support tools + response_format=json_object simultaneously.
+                # Retry up to 2 times on timeout — the relay API has occasional timeouts.
+                response = None
+                last_exc = None
+                for _attempt in range(2):
+                    try:
+                        response = self.client.chat.completions.create(
+                            model=self.model,
+                            messages=messages,
+                            tools=tools,
+                            tool_choice="auto",
+                        )
+                        break
+                    except Exception as exc:
+                        last_exc = exc
+                        print(f"[editor] LLM attempt {_attempt+1} failed: {exc}")
+                if response is None:
+                    raise last_exc
+
                 msg = response.choices[0].message
-                
+
                 # Check for tool calls
                 if msg.tool_calls:
                     messages.append(msg) # Add assistant's message with tool calls
@@ -1531,8 +1543,31 @@ class EditorAgent:
                     # Continue loop to let model use the info
                     continue
                 
-                # If no tool calls, this is the final response
-                content = msg.content
+                # If no tool calls, this is the final response.
+                # Re-request without tools but with response_format=json_object to
+                # guarantee valid JSON output (tools + response_format causes timeouts
+                # on this relay API, so we separate the two calls).
+                # Pass the draft content back so the model only reformats, not re-reasons.
+                format_messages = messages + [
+                    {"role": "assistant", "content": msg.content or ""},
+                    {"role": "user", "content": "Output exactly the above as valid JSON only, no markdown, no extra text."},
+                ]
+                final_response = None
+                last_final_exc = None
+                for _attempt in range(2):
+                    try:
+                        final_response = self.client.chat.completions.create(
+                            model=self.model,
+                            messages=format_messages,
+                            response_format={"type": "json_object"},
+                        )
+                        break
+                    except Exception as exc:
+                        last_final_exc = exc
+                        print(f"[editor] final LLM attempt {_attempt+1} failed: {exc}")
+                if final_response is None:
+                    raise last_final_exc
+                content = final_response.choices[0].message.content
                 try:
                     import re
                     # Try direct JSON parsing

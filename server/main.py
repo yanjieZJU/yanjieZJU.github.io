@@ -464,13 +464,24 @@ async def chat_text(req: ChatRequest):
             yield json.dumps({"type": "thinking"}) + "\n"
 
             # ── Step 1: first call with tools available ──────────────────────
-            first_resp = client.chat.completions.create(
-                model=CHAT_MODEL,
-                messages=msgs,
-                tools=[_RAG_TOOL],
-                tool_choice="auto",
-                stream=False,
-            )
+            # Retry up to 2 times on timeout — the relay API has ~10% timeout rate.
+            first_resp = None
+            last_exc = None
+            for _attempt in range(3):
+                try:
+                    first_resp = client.chat.completions.create(
+                        model=CHAT_MODEL,
+                        messages=msgs,
+                        tools=[_RAG_TOOL],
+                        tool_choice="auto",
+                        stream=False,
+                    )
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    print(f"[chat] Step1 attempt {_attempt+1} failed: {exc}")
+            if first_resp is None:
+                raise last_exc
             choice = first_resp.choices[0]
 
             # ── Step 2: if LLM wants to call the tool, execute it ────────────
