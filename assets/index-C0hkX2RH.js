@@ -79,7 +79,7 @@ order: 5
 ### 知识图谱
 1. 文章提取：收集1200+篇HCI领域文章，以系统架构图为核心，结合全文内容提取出功能模块与连接关系
 2. 在Neo4j中构建知识图谱，节点分为三类，文章、功能模块和模块角色，边为连接关系（包含模块的连接、文章与模块的包含关系、模块与角色的属性关系）
-3. 参考GraphRAG的思路，将文章节点和功能节点进行聚类，得到514个功能簇（Function Communities）和101个场景簇（Scene Clusters），每个功能簇拥有一段描述；在每个场景簇中统计了功能簇的出现频率和拓扑模式，得到在该场景下较为关键或常用的功能模块。
+3. 参考GraphRAG的思路，将文章节点和功能节点进行聚类，得到514个功能簇（Function Communities）和101个场景簇（Scene Clusters），每个功能簇拥有一段描述；在每个场景簇中统计了功能簇的出现频率和拓扑模式，得到在该场景下较为关键或常用的功能和数据流。
 ![Knowledge Graph Structure](diamaid/KG_2.png)`,dA=`---
 title_zh: "基于LLM的说服式语音驾驶助手"
 title_en: "Driver Assistant: Persuading Drivers to Adjust Secondary Tasks Using Large Language Models"
@@ -503,9 +503,9 @@ order: 4
 
 ### 微调实现
 
-使用[LLaMA-Factory](https://github.com/hiyouga/LlamaFactory)框架进行微调
+使用[LLaMA-Factory](https://github.com/hiyouga/LlamaFactory)框架进行微调（[LLaMA-Factory学习记录](https://my.feishu.cn/wiki/QJB6wrdblicsdVktnB6cW7BOnEd?from=from_copylink)）
 
-**训练参数调整**
+**训练过程**
 
 1. 我们首先在Requirement-to-Concept（RC）数据集上按8:2划分训练集和测试集，以LoRA矩阵秩为16进行微调实验，初步得到了各模型在该任务上的性能排序。
 2. 随后，我们将LoRA矩阵秩增加至32，并系统探索了不同学习率、Alpha参数及梯度裁剪范数等超参数的组合。最终基于Rouge-L和BERTScore指标，筛选出综合表现最佳的一组超参数配置。
