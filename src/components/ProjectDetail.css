@@ -449,3 +449,51 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+@media print {
+  /* Hide nav, TOC, breadcrumb, and link buttons */
+  .proj-toc,
+  .proj-breadcrumb,
+  .proj-links {
+    display: none !important;
+  }
+
+  /* Remove screen-only padding from top (navbar offset) */
+  .proj-detail {
+    padding: 24px 0 40px;
+    background: white;
+  }
+
+  /* Constrain layout to single column, full width */
+  .proj-detail-layout {
+    display: block;
+    max-width: 100%;
+  }
+
+  .proj-detail-inner {
+    max-width: 100%;
+  }
+
+  /* Prevent images from breaking across pages */
+  img, video, .proj-card, .proj-highlight-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Keep headings with content below */
+  h2, h3 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  /* Ensure backgrounds and colors print */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Remove border-radius shadows that look odd in print */
+  .proj-cover {
+    max-height: 260px;
+  }
+}
