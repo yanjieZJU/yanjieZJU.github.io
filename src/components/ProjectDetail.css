@@ -454,7 +454,8 @@
   /* Hide nav, TOC, breadcrumb, and link buttons */
   .proj-toc,
   .proj-breadcrumb,
-  .proj-links {
+  .proj-links,
+  .navbar {
     display: none !important;
   }
 
