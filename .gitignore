@@ -1,3 +1,8 @@
 .superpowers/
 reference/
 node_modules
+.claude/
+docs/
+dist/
+pdf-exports/
+
