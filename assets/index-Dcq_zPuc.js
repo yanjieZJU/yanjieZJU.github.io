@@ -198,9 +198,35 @@ CSI 量表显示 ArchCanvas 在探索性（Exploration, d=1.64）、表达性（
 <chart id="BehaviorComparison" />
 
 
+## Update Record / 更新记录
+
+- 2026.06.16：BUG修复
+  - 在意图模块中显式添加“删除”类意图
+  - 修改 tool 描述
+  - 替换 embedding 模型，选择了阿里云的text-embedding-v4模型（1024 dimension）
+  - 使用 deepseek 官方直连，降低延时
+
+- 2026.06.15：系统性模型选型
+  - 选型指标：
+    1. 生成方案质量：Applicability；Effectiveness；Novelty；Completeness
+    2. Latency：TTFT-planner；E2E-planner；E2E-integrator
+    3. Reliability：JSON 格式遵循；Schema齐全；LLM自修复率（不需要走自动化resolve）
+    4. Cost：单次调用成本；单次完整query成本
+  - 步骤：
+    1. 撰写 Rubrics（[参考方法](https://github.com/teqkilla/RubricHub)）；与其他量化指标进行权重设计
+    2. 设置若干个测试案例-形成评测集（复杂度：软件、软硬结合；领域：HCI、工业）
+    3. 在候选模型上跑评测集（每个案例3次取平均），计算最终结果
+   
+- 2026.06.10：LangSmith集成
+    - 解决看不到Editor中间的处理步骤，无法洞察延时和其他问题（如工具调用、模型幻觉）出现位置，无法针对性排查的问题
+    - 使用LangSmith来监控Agent调用记录
+
+
+
 ## Resources / 资源
 
-[PRD 产品需求文档 ➡](/diamaid/ArchCanvas_PRD.docx)`,xA=`---
+[产品需求文档 ➡](/diamaid/ArchCanvas_PRD.docx)
+`,xA=`---
 title_zh: "基于LLM的说服式语音驾驶助手"
 title_en: "Driver Assistant: Persuading Drivers to Adjust Secondary Tasks Using Large Language Models"
 period: "2023.06 — 2023.09 | IEEE SMC 2025 (CCF-C)"
