@@ -1,7 +1,7 @@
 ---
 title_zh: "基于LLM的人体工效学风险预筛助手"
 title_en: "ErgoKARE: A Knowledge-Augmented LLM Method for Video-Based Ergonomic Risk Screening and Recommendation Generation"
-period: "2024.10 — 2025.11 | IDETC（审稿中）"
+period: "2024.10 — 2025.11 | IDETC（设计学 B 类, 已录用）"
 role_zh: "项目负责人"
 role_en: "Project Lead"
 tags: ["LLM", "RAG", "Prompt Engineering", "Ergonomics"]
@@ -73,6 +73,7 @@ order: 1
 **研究问题**：系统生成的分析和建议是否“像专家、能落地”
 
 **方法设计**：我们采用“专家评估 + 用户偏好”的双阶段设计。首先邀请具备工效学背景的专家，对系统生成的风险分析与建议进行评分，并与baseline进行成对对比；随后引入具有相关经验的普通用户，从可读性与接受度角度，对两种方案进行主观偏好选择。该设计旨在同时覆盖“专业正确性”与“实际感受”两个维度。
+
 
 **指标**：在专家评估中，我们主要采用两个核心维度——准确性（Accuracy），用于衡量系统是否正确识别关键风险；有效性（Effectiveness），用于评估建议是否具体、可执行且具有实际改善价值。同时，通过逐对比较统计专家对不同方案的偏好比例。在用户评估中，则以整体偏好（Preference）为核心指标，关注用户在真实阅读情境下更倾向于选择哪一种输出结果，从而反映系统的可理解性与沟通效果。
 
