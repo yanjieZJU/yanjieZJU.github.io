@@ -181,7 +181,7 @@ def set_col_widths(table, widths):
         for idx, width in enumerate(widths):
             row.cells[idx].width = widths[idx]
 
-def export_to_docx(image_b64: str, node_details: dict, overall_description: str = None) -> BytesIO:
+def export_to_docx(image_b64: str, node_details: dict, overall_description: str = None, plan_id: str = None) -> BytesIO:
     """
     Generate a Word document containing the architecture flowchart image,
     overall description, and detailed tables for each module.
@@ -197,6 +197,15 @@ def export_to_docx(image_b64: str, node_details: dict, overall_description: str 
     # Title
     title = doc.add_heading("System Architecture Plan", level=0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # Plan ID
+    if plan_id:
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run(f"快照编码：{plan_id}")
+        run.font.size = Pt(9)
+        run.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
+        doc.add_paragraph("")
 
     # --- AI-generated diagram (placed at the very top) ---
     # print("🖼️  Generating AI diagram for export...")
@@ -217,12 +226,12 @@ def export_to_docx(image_b64: str, node_details: dict, overall_description: str 
 
     # Overall Description
     if overall_description:
-        doc.add_heading("Overall Description", level=1)
+        doc.add_heading("1. 方案总体描述", level=1)
         doc.add_paragraph(overall_description)
         doc.add_paragraph("")
 
     # Add Flowchart Image (from frontend canvas)
-    doc.add_heading("2. Architecture Flowchart", level=1)
+    doc.add_heading("2. 系统架构图", level=1)
 
     if image_b64:
         if ',' in image_b64:
@@ -257,7 +266,6 @@ def export_to_docx(image_b64: str, node_details: dict, overall_description: str 
         table = doc.add_table(rows=0, cols=2)
         table.style = 'Table Grid'
 
-        add_table_row(table, "Brief Description", mod.get("brief_description", ""))
         add_table_row(table, "Function", mod.get("function", ""))
         add_table_row(table, "Technical Methods", mod.get("technical_methods", ""))
 

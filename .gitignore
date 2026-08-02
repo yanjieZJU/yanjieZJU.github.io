@@ -37,3 +37,13 @@ data/
 server/data/
 server/graph_storage/
 server/rag_storage/
+
+eval_models.py
+*.html
+
+.github/
+
+check_missing_fields.py
+
+# config
+config.py

@@ -13,36 +13,53 @@ from agents import (
     IntegratorAgent,
     ConflictSolver,
     EditorAgent,
-    client
+    get_client,
 )
 from retriever_neo4j import get_global_stores
 from session_manager import create_initial_plan, create_modified_plan, get_session_tree, get_plan_lineage
 
 def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, divergence=True, session_id=None):
     vector_store, graph_store = get_global_stores()
-    planner = PlannerAgent(client, graph_store)
-    retriever = RetrieverAgent(vector_store, graph_store, client)
-    integrator = IntegratorAgent(client)
+    planner = PlannerAgent(get_client(), graph_store)
+    retriever = RetrieverAgent(vector_store, graph_store, get_client())
+    integrator = IntegratorAgent(get_client())
     solver = ConflictSolver() # Initialize Solver
     
     yield json.dumps({"type": "progress", "message": "Searching knowledge base...", "percent": 15}) + "\n"
 
-    # === Parallelize structural path retrieval + divergent planning (no dependency between them) ===
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as _ex:
+    # === Parallelize ALL independent retrieval tasks upfront ===
+    # structural paths, divergent planning, AND base anchor retrieval have no mutual dependency
+    print(f"\n🎯 Launching parallel retrieval: structure paths + divergent planning + base anchors...")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as _ex:
         _fut_hints = _ex.submit(retriever.retrieve_structure_paths, user_relations)
         _fut_plans = _ex.submit(
             planner.divergent_planning, user_query, base_anchors, num_outputs
         ) if divergence else None
+        _fut_base  = _ex.submit(retriever.retrieve_for_module, base_anchors, 6, False)
         structural_hints = _fut_hints.result()
         divergent_plans  = _fut_plans.result() if _fut_plans else None
+        base_nodes_map   = _fut_base.result()
 
     if structural_hints:
         print(integrator.format_hints(structural_hints))
 
-    # === Step 1: Global Retrieval for Base Anchors (Higher Recall) ===
-    print(f"\n🎯 Retrieving Base Anchors (Top-6 for richer context)...")
+    # Emit divergent perspectives so frontend can display them immediately
+    if divergent_plans:
+        perspectives_data = [
+            {
+                "perspective": p.get("perspective", ""),
+                "rationale": p.get("rationale", ""),
+                "additional_anchors": [
+                    {"user_term": a.get("user_term", "")}
+                    for a in p.get("additional_anchors", [])
+                ]
+            }
+            for p in divergent_plans
+        ]
+        yield json.dumps({"type": "divergent_perspectives", "perspectives": perspectives_data}) + "\n"
+
     yield json.dumps({"type": "progress", "message": "Extracting domain knowledge and base nodes...", "percent": 35}) + "\n"
-    base_nodes_map = retriever.retrieve_for_module(base_anchors, top_k=6, include_topology=False)
+    print(f"\n🎯 Base anchor retrieval complete ({len(base_nodes_map)} anchors).")
     
     # Process base nodes into standard format
     base_ref_info = {}
@@ -61,44 +78,64 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
             })
         base_ref_info[anchor_name] = anchor_nodes
 
+    # === Pre-fetch additional anchors for ALL divergent plans in parallel ===
+    # This avoids a serial retrieval bottleneck inside the generation loop
+    additional_maps = {}  # index -> {anchor_name: [nodes]}
+    if divergent_plans:
+        def _fetch_additional(idx_plan):
+            idx, plan = idx_plan
+            anchors = plan.get("additional_anchors", [])
+            if not anchors:
+                return idx, {}
+            raw = retriever.retrieve_for_module(anchors, top_k=3, include_topology=True)
+            result = {}
+            for anchor_name, retrieved_list in raw.items():
+                result[anchor_name] = []
+                for node_with_score in retrieved_list:
+                    node = node_with_score.node
+                    result[anchor_name].append({
+                        'id': node.id_,
+                        'text': node.text,
+                        'score': node_with_score.score,
+                        'structural_path': node.metadata.get('topology', None),
+                        'metadata': dict(node.metadata)
+                    })
+            return idx, result
+
+        plans_to_fetch = [(i, p) for i, p in enumerate(divergent_plans)]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(plans_to_fetch) or 1) as _ex:
+            for idx, result in _ex.map(_fetch_additional, plans_to_fetch):
+                additional_maps[idx] = result
+        print(f"✅ Pre-fetched additional anchors for {len(additional_maps)} divergent plans.")
+
     # === Generate Options ===
     target_iterations = num_outputs if divergence else 1
-    
+
     for i in range(target_iterations):
-        
+
         current_ref_info = base_ref_info.copy()
-        
+
         d_plan = None
         # Apply Divergent Plan (if available)
         if divergent_plans and i < len(divergent_plans):
             d_plan = divergent_plans[i]
             print(f"\n{'='*60}")
             print(f"{d_plan}\n")
-        
+
         if d_plan:
             additional_anchors = d_plan.get("additional_anchors", [])
             perspective = d_plan.get("perspective", "Enhanced")
             rationale = d_plan.get("rationale", "")
-            
+
             print(f"Applying Divergent Perspective: {perspective}")
             print(f"Rationale: {rationale}")
-            
+
             additional_desc = f"**Perspective**: {perspective}\n**Rationale**: {rationale}\n\n"
-            
+
             if additional_anchors:
-                # Divergent anchors are new ideas, their topology is valuable context
-                additional_map = retriever.retrieve_for_module(additional_anchors, top_k=3, include_topology=True)
-                for anchor_name, retrieved_list in additional_map.items():
-                    current_ref_info[anchor_name] = []
-                    for node_with_score in retrieved_list:
-                        node = node_with_score.node
-                        current_ref_info[anchor_name].append({
-                            'id': node.id_,
-                            'text': node.text,
-                            'score': node_with_score.score,
-                            'structural_path': node.metadata.get('topology', None),
-                            'metadata': dict(node.metadata)
-                        })
+                # Use pre-fetched results
+                for anchor_name, nodes in additional_maps.get(i, {}).items():
+                    current_ref_info[anchor_name] = nodes
             else:
                 print(f"No additional anchors suggested for this plan")
         else:
@@ -129,28 +166,24 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
             base_anchors=base_anchors
         )
         
-        # === SELF-CORRECTION LOOP ===
-        yield json.dumps({"type": "progress", "message": f"Detecting and resolving conflicts for option {i+1}...", "percent": int(base_percent + 15)}) + "\n"
-        max_retries = 2
-        for attempt in range(max_retries + 1):
-            if not current_arch_json: break
-            
+        # === SINGLE-PASS VALIDATION ===
+        yield json.dumps({"type": "progress", "message": f"Validating option {i+1}...", "percent": int(base_percent + 15)}) + "\n"
+
+        is_valid, report = solver.detect_conflicts(current_arch_json)
+        if not is_valid:
+            print(f"⚠️ Conflicts detected (Attempt 0):\n{report}")
+            # Single LLM refinement attempt
+            current_arch_json = integrator.refine_arch(full_query, current_arch_json, report)
             is_valid, report = solver.detect_conflicts(current_arch_json)
             if is_valid:
-                print(f"✅ Architecture passed integrity check (Attempt {attempt}).")
-                break
+                print(f"✅ Architecture passed after refinement.")
             else:
-                print(f"⚠️ Conflict detected (Attempt {attempt}):\n{report}")
-                if attempt < max_retries:
-                    # Request Fix
-                    current_arch_json = integrator.refine_arch(full_query, current_arch_json, report)
-                else:
-                    print("❌ Max retries reached. Proceeding with best-effort cleanup.")
+                print(f"⚠️ Still has conflicts, will apply automatic cleanup.")
+        else:
+            print(f"✅ Architecture passed integrity check.")
 
-        
         if current_arch_json:
-            # === FINAL SAFEGUARD ===
-            # Resolve leftover conflicts (hard cleanup) before drawing
+            # Apply automatic cleanup for any remaining issues
             validated_arch_json_str = solver.resolve(current_arch_json)
             
             # Skip mermaid generation to save extreme time since frontend natively renders the JSON now
@@ -158,7 +191,9 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
             
             # Add perspective info to description
             try:
-                arch_json = json.loads(validated_arch_json_str)
+                arch_json = json.loads(validated_arch_json_str) if isinstance(validated_arch_json_str, str) else validated_arch_json_str
+                if not isinstance(arch_json, dict):
+                    raise ValueError(f"Expected dict from arch JSON, got {type(arch_json)}")
                 module_details = arch_json.get("module_details", {})
                 raw_desc = arch_json.get("overall_description", "")
                 
@@ -170,6 +205,8 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
                 # Attach reference details directly to module_details
                 if isinstance(module_details, list):
                     for details in module_details:
+                        if details.get("brief_description"):
+                            details["function"] = details["brief_description"]
                         mod_name = details.get("name", "Unknown")
                         if mod_name in used_ref and used_ref[mod_name]:
                             first_ref = used_ref[mod_name][0]
@@ -193,7 +230,10 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
                         else:
                             details["reference"] = None
                         
-            except:
+            except Exception as _parse_err:
+                import traceback
+                print(f"❌ pipeline parse error: {_parse_err}")
+                traceback.print_exc()
                 module_details = {}
                 raw_desc = ""
                 used_ref = {}
@@ -233,15 +273,15 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
 
     yield json.dumps({"type": "progress", "message": "所有方案生成完毕！", "percent": 100}) + "\n"
 
-def run_edit_pipeline(plan_id, current_plan_json, user_instruction, original_query, session_id=None):
+def run_edit_pipeline(plan_id, current_plan_json, user_instruction, original_query, session_id=None, referenced_modules=None):
     # Initialize agents
-    integrator = IntegratorAgent(client)
+    integrator = IntegratorAgent(get_client())
     solver = ConflictSolver()
-    editor = EditorAgent(client)
-    
+    editor = EditorAgent(get_client())
+
     # Initialize retriever for tool use
     vector_store, graph_store = get_global_stores()
-    retriever = RetrieverAgent(vector_store, graph_store, client)
+    retriever = RetrieverAgent(vector_store, graph_store, get_client())
 
     if plan_id:
         print(f"User requested modification on parent node: {plan_id}")
@@ -273,9 +313,9 @@ def run_edit_pipeline(plan_id, current_plan_json, user_instruction, original_que
             print(f"Warning: Could not load lineage for plan {plan_id}: {e}")
 
     yield json.dumps({"type": "progress", "message": "Analyzing and modifying...", "percent": 20}) + "\n"
-    
+
     # Call Editor Agent (One-shot with tools)
-    edit_result = editor.edit_plan(current_plan_json, user_instruction, history_summary, retriever)
+    edit_result = editor.edit_plan(current_plan_json, user_instruction, history_summary, retriever, referenced_modules=referenced_modules)
     
     # Handle cases where edit_result might not be a dictionary (e.g., if JSON decoding failed inside editor)
     if not isinstance(edit_result, dict):
@@ -311,25 +351,13 @@ def run_edit_pipeline(plan_id, current_plan_json, user_instruction, original_que
 
     print(f"✅ Editor Intent: {modification_intent}")
 
-    # 2. Conflict Check & Refine Loop — only for plan_update
+    # 2. Quick validation (skip slow LLM refinement loop)
     current_arch_json = modified_arch_json
-
-    max_retries = 3
+    yield json.dumps({"type": "progress", "message": "Validating architecture...", "percent": 60}) + "\n"
 
     is_valid, report = solver.detect_conflicts(current_arch_json)
     if not is_valid:
-        for attempt in range(max_retries):
-            if not current_arch_json: break
-            print(f"⚠️ Conflict detected in modified arch:\n{report}")
-            yield json.dumps({"type": "progress", "message": f"Verifying integrity (Attempt {attempt+1})...", "percent": 50 + (attempt * 10)}) + "\n"
-            arch_str = json.dumps(current_arch_json, indent=2) if isinstance(current_arch_json, dict) else current_arch_json
-            current_arch_json = integrator.refine_arch(original_query, arch_str, report)
-            is_valid, report = solver.detect_conflicts(current_arch_json)
-            if is_valid:
-                print(f"✅ Modified architecture passed integrity check.")
-                break
-        else:
-            print("❌ Max retries reached for modification.")
+        print(f"⚠️ Conflicts detected, will apply automatic cleanup:\n{report}")
     else:
         print(f"✅ Modified architecture passed integrity check.")
 
@@ -352,10 +380,17 @@ def run_edit_pipeline(plan_id, current_plan_json, user_instruction, original_que
             # Attach basic reference info if missing (Frontend might expect it)
             if isinstance(module_details, list):
                 for details in module_details:
+                    # Strip internal diff marker before sending to frontend
+                    details.pop("change_type", None)
+                    if details.get("brief_description"):
+                        details["function"] = details["brief_description"]
                     if "reference" not in details:
                         details["reference"] = None
             else:
                 for mod_name, details in module_details.items():
+                    details.pop("change_type", None)
+                    if details.get("brief_description"):
+                        details["function"] = details["brief_description"]
                     if "reference" not in details:
                         details["reference"] = None
             

@@ -1,10 +1,17 @@
 import os
 
 # === OpenAI Configuration ===
+
 os.environ["OPENAI_API_KEY"] = "YOUR API KEY" 
 os.environ["OPENAI_BASE_URL"] = "BASE URL"
 
 os.environ["DASHSCOPE_API_KEY"] = ""
+
+# === Model Configuration ===
+# Change this one line to switch models across the entire backend
+CHAT_MODEL = "gpt-5.4-mini"
+# CHAT_MODEL = "gpt-5"
+
 
 # === Neo4j Configuration ===
 NEO4J_USERNAME = ""
@@ -19,7 +26,7 @@ if __name__ == "__main__":
     client = OpenAI(http_client=http_client)
     
     print(client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=CHAT_MODEL,
         messages=[{"role": "user", "content": "How are you?"}],
         temperature=0.2,
     ).choices[0].message.content)

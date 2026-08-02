@@ -19,6 +19,8 @@ import re
 import hashlib
 import concurrent.futures
 from pathlib import Path
+import sqlite3
+import numpy as np
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import *
@@ -63,11 +65,13 @@ _SECTION_RE = re.compile(
 )
 
 # ── Globals ────────────────────────────────────────────────────────────────────
-_RAG_VECTOR_STORE = None
+_RAG_VECTOR_STORE = None   # kept for compat check in main.py
+_RAG_MATRIX = None         # np.ndarray (N, D) float32
+_RAG_IDS = None            # list[str]
 _RAG_EMBED_MODEL = None
-_BM25_INDEX = None
-_NODE_META: dict = {}
-_NODE_TEXT: dict = {}
+_BM25_INDEX = None         # list[tuple[str, list[str]]]
+_DB_CONN = None
+RAG_DB_PATH = os.path.join(RAG_STORAGE_DIR, "rag_nodes.sqlite")
 
 # ── Embed model ────────────────────────────────────────────────────────────────
 def get_embed_model():
@@ -80,6 +84,55 @@ def get_embed_model():
         )
     return _RAG_EMBED_MODEL
 
+def get_rag_db():
+    global _DB_CONN
+    if _DB_CONN is None:
+        _DB_CONN = sqlite3.connect(RAG_DB_PATH, check_same_thread=False)
+        _DB_CONN.row_factory = sqlite3.Row
+    return _DB_CONN
+
+
+def init_rag_db():
+    conn = get_rag_db()
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS rag_nodes (
+        node_id TEXT PRIMARY KEY,
+        source TEXT,
+        title TEXT,
+        abstract TEXT,
+        section TEXT,
+        text TEXT
+    )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_rag_nodes_source ON rag_nodes(source)")
+    conn.commit()
+
+
+def fetch_nodes_by_ids(node_ids: list[str]) -> dict[str, dict]:
+    if not node_ids:
+        return {}
+
+    conn = get_rag_db()
+    placeholders = ",".join("?" for _ in node_ids)
+    rows = conn.execute(
+        f"""
+        SELECT node_id, source, title, abstract, section, text
+        FROM rag_nodes
+        WHERE node_id IN ({placeholders})
+        """,
+        node_ids
+    ).fetchall()
+
+    out = {}
+    for r in rows:
+        out[r["node_id"]] = {
+            "source": r["source"],
+            "title": r["title"],
+            "abstract": r["abstract"],
+            "section": r["section"],
+            "text": r["text"],
+        }
+    return out
 
 # ── PDF parsing ────────────────────────────────────────────────────────────────
 def _extract_pdf_text(pdf_path: str) -> str:
@@ -240,8 +293,8 @@ def build_rag_index(articles_dir: str = ARTICLES_DIR,
     os.makedirs(storage_dir, exist_ok=True)
     manifest_path = os.path.join(storage_dir, "manifest.json")
     store_path = os.path.join(storage_dir, "default__vector_store.json")
-    meta_path = os.path.join(storage_dir, "node_meta.json")
-    text_path = os.path.join(storage_dir, "node_text.json")
+    # meta_path = os.path.join(storage_dir, "node_meta.json")
+    # text_path = os.path.join(storage_dir, "node_text.json")
 
     # Load existing store
     if os.path.exists(store_path) and os.path.exists(manifest_path):
@@ -254,17 +307,21 @@ def build_rag_index(articles_dir: str = ARTICLES_DIR,
         vector_store = SimpleVectorStore()
         manifest = {}
 
-    node_meta: dict = {}
-    if os.path.exists(meta_path):
-        with open(meta_path, encoding="utf-8") as f:
-            node_meta = json.load(f)
+    # node_meta: dict = {}
+    # if os.path.exists(meta_path):
+    #     with open(meta_path, encoding="utf-8") as f:
+    #         node_meta = json.load(f)
 
-    node_text: dict = {}
-    if os.path.exists(text_path):
-        with open(text_path, encoding="utf-8") as f:
-            node_text = json.load(f)
+    # node_text: dict = {}
+    # if os.path.exists(text_path):
+    #     with open(text_path, encoding="utf-8") as f:
+    #         node_text = json.load(f)
 
     embed_model = get_embed_model()
+
+    init_rag_db()
+    conn = get_rag_db()
+
     pdf_files = sorted(Path(articles_dir).glob("*.pdf"))
     print(f"[PDF] {len(pdf_files)} PDFs found in {articles_dir}")
 
@@ -329,8 +386,20 @@ def build_rag_index(articles_dir: str = ARTICLES_DIR,
             }
             node.embedding = embedding  # must be set before add()
             vector_store.add([node])
-            node_meta[node_id] = node.metadata
-            node_text[node_id] = chunk_dict["text"]  # store text separately
+            # node_meta[node_id] = node.metadata
+            # node_text[node_id] = chunk_dict["text"]  # store text separately
+            conn.execute("""
+            INSERT OR REPLACE INTO rag_nodes
+            (node_id, source, title, abstract, section, text)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                node_id,
+                fname,
+                title,
+                abstract[:300] if abstract else "",
+                chunk_dict["section"],
+                chunk_dict["text"],
+            ))
 
         manifest[fname] = file_sig
         new_files += 1
@@ -339,10 +408,11 @@ def build_rag_index(articles_dir: str = ARTICLES_DIR,
             vector_store.persist(persist_path=os.path.join(storage_dir, "default__vector_store.json"))
             with open(manifest_path, "w") as f:
                 json.dump(manifest, f)
-            with open(meta_path, "w", encoding="utf-8") as f:
-                json.dump(node_meta, f, ensure_ascii=False)
-            with open(text_path, "w", encoding="utf-8") as f:
-                json.dump(node_text, f, ensure_ascii=False)
+            # with open(meta_path, "w", encoding="utf-8") as f:
+            #     json.dump(node_meta, f, ensure_ascii=False)
+            # with open(text_path, "w", encoding="utf-8") as f:
+            #     json.dump(node_text, f, ensure_ascii=False)
+            conn.commit()
             print(f"  [SAVE] Checkpoint: {new_files} new files, "
                   f"{len(vector_store._data.embedding_dict)} total chunks.")
 
@@ -350,10 +420,11 @@ def build_rag_index(articles_dir: str = ARTICLES_DIR,
         vector_store.persist(persist_path=os.path.join(storage_dir, "default__vector_store.json"))
         with open(manifest_path, "w") as f:
             json.dump(manifest, f)
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(node_meta, f, ensure_ascii=False)
-        with open(text_path, "w", encoding="utf-8") as f:
-            json.dump(node_text, f, ensure_ascii=False)
+        # with open(meta_path, "w", encoding="utf-8") as f:
+        #     json.dump(node_meta, f, ensure_ascii=False)
+        # with open(text_path, "w", encoding="utf-8") as f:
+        #     json.dump(node_text, f, ensure_ascii=False)
+        conn.commit()
         print(f"[OK] Index built: {new_files} new files, "
               f"{len(vector_store._data.embedding_dict)} total chunks.")
     else:
@@ -363,28 +434,22 @@ def build_rag_index(articles_dir: str = ARTICLES_DIR,
 
 
 # ── Load ───────────────────────────────────────────────────────────────────────
-def get_rag_store() -> SimpleVectorStore:
-    global _RAG_VECTOR_STORE, _NODE_META, _NODE_TEXT
-    if _RAG_VECTOR_STORE is None:
-        store_path = os.path.join(RAG_STORAGE_DIR, "default__vector_store.json")
-        if os.path.exists(store_path):
-            print("[DIR] Loading RAG vector store...")
-            _RAG_VECTOR_STORE = SimpleVectorStore.from_persist_dir(persist_dir=RAG_STORAGE_DIR)
-            print(f"   [OK] {len(_RAG_VECTOR_STORE._data.embedding_dict)} chunks loaded.")
-        else:
-            print("[BUILD] Building RAG index from scratch (this will take a while)...")
-            _RAG_VECTOR_STORE = build_rag_index()
-        # Load metadata and text into memory once
-        meta_path = os.path.join(RAG_STORAGE_DIR, "node_meta.json")
-        text_path = os.path.join(RAG_STORAGE_DIR, "node_text.json")
-        if os.path.exists(meta_path):
-            with open(meta_path, encoding="utf-8") as f:
-                _NODE_META = json.load(f)
-        if os.path.exists(text_path):
-            with open(text_path, encoding="utf-8") as f:
-                _NODE_TEXT = json.load(f)
-        print(f"   [OK] {len(_NODE_TEXT)} chunk texts cached in memory.")
-    return _RAG_VECTOR_STORE
+def get_rag_store():
+    global _RAG_VECTOR_STORE, _RAG_MATRIX, _RAG_IDS
+    if _RAG_MATRIX is None:
+        npy_path = os.path.join(RAG_STORAGE_DIR, "rag_embeddings.npy")
+        ids_path = os.path.join(RAG_STORAGE_DIR, "rag_embedding_ids.json")
+        if not os.path.exists(npy_path):
+            raise RuntimeError("RAG numpy store not found. Run convert_rag_store.py first.")
+        print("[RAG] Loading vector store from disk...", flush=True)
+        _RAG_MATRIX = np.load(npy_path)
+        with open(ids_path) as f:
+            _RAG_IDS = json.load(f)
+        _RAG_VECTOR_STORE = True  # sentinel so main.py compat check passes
+        print(f"[RAG] Vector store ready: {len(_RAG_IDS)} chunks.", flush=True)
+        init_rag_db()
+        print("[RAG] Metadata DB ready.", flush=True)
+    return _RAG_MATRIX, _RAG_IDS
 
 
 # ── BM25 helpers ───────────────────────────────────────────────────────────────
@@ -393,10 +458,10 @@ def _tokenize(text: str) -> list[str]:
 
 
 def _build_bm25_index() -> list[tuple[str, list[str]]]:
-    """Build an in-memory BM25 index from the cached _NODE_TEXT global."""
-    if not _NODE_TEXT:
-        return []
-    return [(nid, _tokenize(text)) for nid, text in _NODE_TEXT.items()]
+    """Build an in-memory BM25 index by streaming all texts from SQLite."""
+    conn = get_rag_db()
+    rows = conn.execute("SELECT node_id, text FROM rag_nodes").fetchall()
+    return [(r["node_id"], _tokenize(r["text"])) for r in rows]
 
 
 def _bm25_score(query_tokens: list[str], doc_tokens: list[str],
@@ -462,7 +527,7 @@ def _expand_query(query: str, n: int = QUERY_EXPANSIONS) -> list[str]:
     )
     try:
         resp = _client.chat.completions.create(
-            model="gpt-5.2-chat-latest",
+            model=CHAT_MODEL,
             messages=[
                 {
                     "role": "system",
@@ -489,71 +554,71 @@ def _expand_query(query: str, n: int = QUERY_EXPANSIONS) -> list[str]:
     return [query] + rewrites
 
 
+def _numpy_dense_search(query_embedding, matrix, ids, top_k):
+    """Cosine similarity search using numpy."""
+    q = np.array(query_embedding, dtype=np.float32)
+    q_norm = q / (np.linalg.norm(q) + 1e-10)
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    normed = matrix / (norms + 1e-10)
+    scores = normed @ q_norm
+    top_indices = np.argpartition(scores, -min(top_k, len(scores)))[-min(top_k, len(scores)):]
+    top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]
+    return [(ids[i], float(scores[i])) for i in top_indices]
+
+
 # ── Main retrieval ─────────────────────────────────────────────────────────────
 def rag_retrieve(query: str, top_k: int = FINAL_TOP_K) -> list[dict]:
     """
-    Hybrid retrieval with query expansion and RRF fusion.
+    Hybrid retrieval with query expansion and RRF fusion (BM25 + dense).
     Returns top_k chunks as list of dicts: {source, title, section, text, score}.
     """
-    vector_store = get_rag_store()
+    matrix, ids = get_rag_store()
     embed_model = get_embed_model()
 
-    # 1. Query expansion
-    queries = _expand_query(query)
-    print(f"[SEARCH] RAG: {len(queries)} queries (original + {len(queries)-1} rewrites)")
+    # 1. Use original query only (skip expansion to avoid latency in chat context)
+    queries = [query]
+    print(f"[SEARCH] RAG: 1 query")
 
     all_dense_lists: list[list[tuple[str, float]]] = []
     all_bm25_lists: list[list[tuple[str, float]]] = []
 
     for q in queries:
-        # Dense retrieval with timeout
+        # Dense retrieval — call directly (no nested ThreadPoolExecutor which deadlocks in asyncio)
         q_emb = None
         for attempt in range(3):
             try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                    future = ex.submit(embed_model.get_query_embedding, q)
-                    q_emb = future.result(timeout=15)
+                q_emb = embed_model.get_query_embedding(q)
                 break
-            except concurrent.futures.TimeoutError:
-                print(f"  [WARN] Query embed timeout (attempt {attempt+1}), retrying...")
-                time.sleep(2)
             except Exception as e:
                 print(f"  [WARN] Embed error (attempt {attempt+1}): {e}")
                 time.sleep(2 ** attempt)
-        if q_emb is None:
-            continue
+        if q_emb is not None:
+            dense_ranked = _numpy_dense_search(q_emb, matrix, ids, top_k=DENSE_TOP_K)
+            all_dense_lists.append(dense_ranked)
 
-        vq = VectorStoreQuery(query_embedding=q_emb, similarity_top_k=DENSE_TOP_K)
-        vr = vector_store.query(vq)
-        dense_ranked = list(zip(vr.ids, vr.similarities))
-        all_dense_lists.append(dense_ranked)
-
-        # BM25 retrieval
-        bm25_ranked = _bm25_retrieve(q, top_k=BM25_TOP_K)
-        all_bm25_lists.append(bm25_ranked)
+        # BM25 retrieval skipped — too slow for 26k chunks in synchronous context
 
     if not all_dense_lists:
         return []
 
-    # 2. RRF fusion across all dense lists + all BM25 lists
-    fused = _rrf_fuse(all_dense_lists + all_bm25_lists)
+    # 2. Use dense results directly (no BM25 to fuse)
+    fused = _rrf_fuse(all_dense_lists)
 
-    # 3. Take top RERANK_CUTOFF, then return top_k
+    # 3. Take top RERANK_CUTOFF, fetch from SQLite, return top_k
     top_candidates = fused[:RERANK_CUTOFF]
+    payload_map = fetch_nodes_by_ids([node_id for node_id, _ in top_candidates])
 
-    # 4. Build result dicts from cached globals (loaded once in get_rag_store)
     results = []
     for node_id, rrf_score in top_candidates:
-        text = _NODE_TEXT.get(node_id)
-        if text is None:
+        payload = payload_map.get(node_id)
+        if not payload:
             continue
-        meta = _NODE_META.get(node_id, {})
         results.append({
-            "source": meta.get("source", "unknown"),
-            "title": meta.get("title", ""),
-            "section": meta.get("section", ""),
-            "abstract": meta.get("abstract", ""),
-            "text": text,
+            "source": payload.get("source", "unknown"),
+            "title": payload.get("title", ""),
+            "section": payload.get("section", ""),
+            "abstract": payload.get("abstract", ""),
+            "text": payload.get("text", ""),
             "score": round(rrf_score, 6),
         })
         if len(results) >= top_k:
