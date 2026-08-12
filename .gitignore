@@ -42,11 +42,15 @@ server/flat_storage/
 eval_models.py
 *.html
 
-# results
-batch_results/
+.github/
 
-# tasks
+check_missing_fields.py
+
+# config
+config.py
+
+
 *.json
 
-# vibe
-.claude
+# results
+batch_results/
