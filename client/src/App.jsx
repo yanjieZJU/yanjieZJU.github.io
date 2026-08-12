@@ -472,6 +472,8 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState('开始生成...'); // 进度条状态
+  // Retrieval backend: "kg" (Knowledge Graph) / "flat" (structure-ablated) / "rag" (Vector RAG)
+  const [retrievalMode, setRetrievalMode] = useState('kg');
 
   // 多方案状态
   const [plans, setPlans] = useState([]); // 存储所有返回的方案
@@ -506,10 +508,13 @@ function App() {
     plansRef.current = plans;
   }, [plans]);
 
-  // Trigger KG warmup when the generate page loads
+  // Trigger warmup for the selected retrieval backend whenever it changes
   useEffect(() => {
-    fetch(`${API_BASE}/warmup/kg`, { method: 'POST' }).catch(() => {});
-  }, []);
+    const endpoint = retrievalMode === 'rag' ? '/warmup/rag'
+      : retrievalMode === 'flat' ? '/warmup/flat'
+      : '/warmup/kg';
+    fetch(`${API_BASE}${endpoint}`, { method: 'POST' }).catch(() => {});
+  }, [retrievalMode]);
 
   useEffect(() => {
     const currentPlan = plansRef.current[activePlanIndex];
@@ -940,7 +945,8 @@ function App() {
           session_id: sessionId.trim() || undefined,
           prompt: description,
           anchors: anchorsPayload,
-          relations: relationsPayload
+          relations: relationsPayload,
+          retrieval_mode: retrievalMode
         })
       });
 
@@ -1064,6 +1070,7 @@ function App() {
         instruction: modificationInput,
         original_query: description,
         referenced_modules: referencedModules.length > 0 ? referencedModules : undefined,
+        retrieval_mode: retrievalMode,
       };
 
       // Clear input and quoted modules immediately
@@ -1762,6 +1769,34 @@ function App() {
                     <span className="tag-remove" onClick={(e) => { e.stopPropagation(); removeNode(node.id); }}>×</span>
                   </span>
                 ))}
+              </div>
+
+              <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
+                <span style={{ color: '#666' }}>检索方式:</span>
+                <select
+                  value={retrievalMode}
+                  onChange={(e) => setRetrievalMode(e.target.value)}
+                  disabled={loading}
+                  style={{
+                    padding: '4px 8px',
+                    border: '1px solid #d0d7de',
+                    borderRadius: '4px',
+                    background: '#fff',
+                    color: '#333',
+                    fontSize: '12px',
+                    cursor: loading ? 'not-allowed' : 'pointer',
+                  }}
+                  title="切换知识检索后端"
+                >
+                  <option value="kg">Knowledge Graph</option>
+                  <option value="flat">Flat Modules</option>
+                  <option value="rag">Vector RAG</option>
+                </select>
+                <span style={{ color: '#aaa', fontSize: '11px' }}>
+                  {retrievalMode === 'kg' ? '基于知识图谱+拓扑检索'
+                    : retrievalMode === 'flat' ? '同源模块文本，纯向量检索（无图结构）'
+                    : '基于原文向量检索（无拓扑）'}
+                </span>
               </div>
 
               <button

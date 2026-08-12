@@ -36,10 +36,13 @@ import threading
 
 KG_READY = False
 RAG_READY = False
+FLAT_READY = False
 KG_LOADING = False
 RAG_LOADING = False
+FLAT_LOADING = False
 KG_INIT_ERROR = None
 RAG_INIT_ERROR = None
+FLAT_INIT_ERROR = None
 
 
 @asynccontextmanager
@@ -118,6 +121,7 @@ class GenRequest(BaseModel):
     relations: list[RelationDef] = []
     userNodes: list[str] = [] # 用户定义的纯文本节点列表 (作为后续预留或旧版本兼容)
     allowRandomNodes: bool = False # 是否允许生成随机节点
+    retrieval_mode: str = "kg"  # "kg" (Knowledge Graph) / "flat" (structure-ablated) / "rag" (Vector RAG)
 
 class EditRequest(BaseModel):
     session_id: Optional[str] = None
@@ -126,6 +130,7 @@ class EditRequest(BaseModel):
     instruction: str
     original_query: str
     referenced_modules: Optional[list] = None  # [{plan_name, module_name, module_data}]
+    retrieval_mode: str = "kg"  # "kg" / "flat" / "rag"
 
 class ExportRequest(BaseModel):
     image: str # Base64 encoded image string
@@ -144,11 +149,14 @@ async def ready():
     return {
         "kg_ready": KG_READY,
         "rag_ready": RAG_READY,
+        "flat_ready": FLAT_READY,
         "kg_loading": KG_LOADING,
         "rag_loading": RAG_LOADING,
+        "flat_loading": FLAT_LOADING,
         "kg_error": KG_INIT_ERROR,
         "rag_error": RAG_INIT_ERROR,
-        "all_ready": KG_READY and RAG_READY,
+        "flat_error": FLAT_INIT_ERROR,
+        "all_ready": KG_READY and RAG_READY and FLAT_READY,
     }
 
 @app.get("/ready/kg")
@@ -166,6 +174,15 @@ async def ready_rag():
         "ready": RAG_READY,
         "loading": RAG_LOADING,
         "error": RAG_INIT_ERROR,
+    }
+
+
+@app.get("/ready/flat")
+async def ready_flat():
+    return {
+        "ready": FLAT_READY,
+        "loading": FLAT_LOADING,
+        "error": FLAT_INIT_ERROR,
     }
 
 @app.post("/warmup/kg")
@@ -213,6 +230,9 @@ async def warmup_rag():
         try:
             print("[RAG] Warmup started...", flush=True)
             get_rag_store()
+            # Paper-level near/far routing embeddings (built once, cached on disk)
+            from paper_router import get_paper_router
+            get_paper_router()
             RAG_READY = True
             print("[RAG] Warmup finished.", flush=True)
         except Exception as e:
@@ -223,6 +243,35 @@ async def warmup_rag():
 
     threading.Thread(target=_run, daemon=True, name="rag-warmup").start()
     return {"status": "ok", "message": "RAG warmup started."}
+
+
+@app.post("/warmup/flat")
+async def warmup_flat():
+    global FLAT_READY, FLAT_LOADING, FLAT_INIT_ERROR
+
+    if FLAT_READY:
+        return {"status": "ok", "message": "FLAT already ready."}
+    if FLAT_LOADING:
+        return {"status": "ok", "message": "FLAT warmup already running."}
+
+    def _run():
+        global FLAT_READY, FLAT_LOADING, FLAT_INIT_ERROR
+        FLAT_LOADING = True
+        FLAT_INIT_ERROR = None
+        try:
+            print("[FLAT] Warmup started...", flush=True)
+            from retriever_flat import get_flat_store
+            get_flat_store()
+            FLAT_READY = True
+            print("[FLAT] Warmup finished.", flush=True)
+        except Exception as e:
+            FLAT_INIT_ERROR = str(e)
+            print(f"[FLAT] Warmup failed: {e}", flush=True)
+        finally:
+            FLAT_LOADING = False
+
+    threading.Thread(target=_run, daemon=True, name="flat-warmup").start()
+    return {"status": "ok", "message": "FLAT warmup started."}
 
 # --- 4. 核心接口 ---
 @app.get("/ping")
@@ -252,9 +301,10 @@ async def generate_mermaid(req: GenRequest):
                 user_query=req.prompt,
                 base_anchors=anchors_list,
                 user_relations=relations_list,
-                num_outputs=3, 
+                num_outputs=3,
                 divergence=True,
-                session_id=req.session_id # Pass session_id
+                session_id=req.session_id, # Pass session_id
+                retrieval_mode=req.retrieval_mode
             ):
                 yield chunk
         except Exception as e:
@@ -308,6 +358,7 @@ async def edit_architecture(req: EditRequest):
                 original_query=req.original_query,
                 session_id=req.session_id,
                 referenced_modules=req.referenced_modules,
+                retrieval_mode=req.retrieval_mode,
             ):
                 yield chunk
         except Exception as e:

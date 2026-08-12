@@ -37,6 +37,16 @@ data/
 server/data/
 server/graph_storage/
 server/rag_storage/
+server/flat_storage/
 
 eval_models.py
 *.html
+
+# results
+batch_results/
+
+# tasks
+*.json
+
+# vibe
+.claude

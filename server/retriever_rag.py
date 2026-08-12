@@ -625,6 +625,8 @@ def rag_retrieve(query: str, top_k: int = FINAL_TOP_K) -> list[dict]:
             break
 
     print(f"   [OK] Returning {len(results)} chunks after RRF fusion.")
+    for r in results:
+        print(f"  [{r['score']:.4f}] {r.get('title', r.get('source',''))[:40]!r} | {r['text'][:100]!r}")
     return results
 
 

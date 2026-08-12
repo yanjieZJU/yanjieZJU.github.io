@@ -348,7 +348,7 @@ def retrieve_and_get_content(query, vector_store, graph_store, top_k=5, node_typ
         # Reconstruct node
         new_node = TextNode(text=enriched_text, id_=node.node_id)
         new_node.metadata = node.metadata
-        
+        print(f"[KG] [{score:.4f}] {node.metadata.get('name', '')!r:30s} | {(node.metadata.get('text') or '')[:100]!r}")
         processed_nodes.append(NodeWithScore(node=new_node, score=score))
 
     return processed_nodes

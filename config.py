@@ -2,7 +2,7 @@ import os
 
 # === OpenAI Configuration ===
 os.environ["OPENAI_API_KEY"] = "sk-y44HwiOqlzdvdMwiVGmyzpITjGQdkwWS0bJuDMWN2awpHnX7"
-os.environ["OPENAI_BASE_URL"] = "https://poloai.top/v1"
+os.environ["OPENAI_BASE_URL"] = "https://poloapi.top/v1"
 
 # === Multi-Key Pool (round-robin load balancing) ===
 # Add more keys here to distribute concurrent requests across accounts.

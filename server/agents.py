@@ -23,6 +23,7 @@ from retriever_neo4j import (
     run_with_retry,
     execute_read_with_session
 )
+from llama_index.core.schema import TextNode, NodeWithScore
 
 # === Round-robin client pool ===
 # One OpenAI client per key; concurrent requests rotate through the pool
@@ -162,9 +163,10 @@ class PlannerAgent:
                 
         return best_label, best_score
 
-    def __init__(self, client, graph_store):
+    def __init__(self, client, graph_store, retrieval_mode="kg"):
         self.client = client
         self.graph_store = graph_store
+        self.retrieval_mode = retrieval_mode
         
         # Load Topology Knowledge
         self.topology_knowledge = {}
@@ -189,7 +191,11 @@ class PlannerAgent:
         Generates divergent extension plans based on the user query and already extracted base anchors.
         Uses Knowledge-Distance Perspective Injection to find both near-field and far-field inspirations.
         """
-        
+        # Flat/RAG conditions must not use graph-derived scene clusters for routing —
+        # they route near/far over article-level embeddings instead (same selection rule).
+        if self.retrieval_mode in ("flat", "rag"):
+            return self._divergent_planning_articles(user_query, base_anchors, num_outputs)
+
         # Format base anchors for the prompt
         base_anchors_str = json.dumps([a['user_term'] for a in base_anchors], ensure_ascii=False)
         
@@ -360,6 +366,11 @@ class PlannerAgent:
 
             relevant_comm_ids = top_comm_ids + tail_comm_ids
             tail_set = set(tail_comm_ids)
+
+            # In vector-RAG mode there is no Neo4j graph_store — skip community
+            # summaries fetch (planner LLM logic unchanged, just less context).
+            if self.graph_store is None or self.retrieval_mode == "rag":
+                return primary_id, [], relevant_comm_ids
 
             def _fetch_comm_summaries(tx, comm_ids):
                 cypher = """
@@ -567,36 +578,320 @@ class PlannerAgent:
                     time.sleep(3 * (_attempt + 1))
         return []
 
+    def _divergent_planning_articles(self, user_query, base_anchors, num_outputs=2):
+        """
+        Near/far routing for the non-graph conditions ("flat" and "rag").
+        Mirrors the KG condition's selection rule (near = top-1, far = sampled from
+        the 0.3-0.6 similarity band with up to 2 same-domain neighbors), but operates
+        on article-level embeddings instead of scene clusters:
+        - "rag":  raw title+abstract embeddings (no KG-extraction products at all)
+        - "flat": ART_ node embeddings from the shared vector store (same content
+                  as KG, structure removed)
+        """
+        base_anchors_str = json.dumps([a['user_term'] for a in base_anchors], ensure_ascii=False)
+        num_outputs = min(max(1, num_outputs), 3)
+
+        # 1. Score all articles/papers against the query
+        if self.retrieval_mode == "rag":
+            from paper_router import score_papers, paper_similarity, get_paper_text
+            scored = score_papers(user_query)
+            _sim = paper_similarity
+            def _text_of(pid):
+                return get_paper_text(pid)
+            def _name_of(pid):
+                t = get_paper_text(pid)
+                return (t.splitlines()[0] if t else pid)[:80]
+        else:  # flat
+            from retriever_flat import flat_score_articles, article_similarity, fetch_flat_nodes
+            scored = flat_score_articles(user_query)
+            _sim = article_similarity
+            _art_cache = {}
+            def _fetch(pid):
+                if pid not in _art_cache:
+                    _art_cache.update(fetch_flat_nodes([pid]))
+                return _art_cache.get(pid, {})
+            def _text_of(pid):
+                p = _fetch(pid)
+                return f"{p.get('name','')}\n{p.get('text','')}".strip()
+            def _name_of(pid):
+                return (_fetch(pid).get("name") or pid)[:80]
+
+        if not scored:
+            print("⚠️ Article routing returned no candidates.")
+            return []
+
+        # 2. Select near/far references (same rule as KG scene-cluster routing)
+        selected_references = []
+        near_id, near_score = scored[0]
+        if near_score < 0.5:
+            selected_references.append({
+                "type": "NEAR_FIELD_MISSING", "paper_ids": [], "score": near_score,
+                "name": "No Relevant Papers Found"
+            })
+            print(f"⚠️ Near-Field score low ({near_score:.2f} < 0.5). Marked as missing.")
+        else:
+            # take top-3 papers as the near-field pack (papers are finer-grained than clusters)
+            near_pack = [pid for pid, s in scored[:3] if s >= 0.5]
+            selected_references.append({
+                "type": "NEAR_FIELD", "paper_ids": near_pack, "score": near_score,
+                "name": _name_of(near_id)
+            })
+            print(f"🎯 Near-Field papers: {[_name_of(p)[:40] for p in near_pack]}")
+
+        near_set = set(selected_references[0].get("paper_ids", []))
+        far_candidates = [(pid, s) for pid, s in scored if 0.3 <= s <= 0.6 and pid not in near_set]
+
+        needed_far = max(0, num_outputs - 1)
+        if far_candidates and needed_far > 0:
+            import random
+            chosen_far = random.sample(far_candidates, min(len(far_candidates), needed_far))
+            used_far = set()
+            far_pool_ids = [pid for pid, _ in far_candidates]
+            for pid, score in chosen_far:
+                used_far.add(pid)
+                # expand with up to 2 same-domain neighbors from the query-filtered band
+                neighbors = []
+                for other in far_pool_ids:
+                    if other == pid or other in used_far or other in near_set:
+                        continue
+                    s = _sim(pid, other)
+                    if s >= 0.6:
+                        neighbors.append((other, s))
+                neighbors.sort(key=lambda x: x[1], reverse=True)
+                neighbor_ids = [n[0] for n in neighbors[:2]]
+                used_far.update(neighbor_ids)
+                selected_references.append({
+                    "type": "FAR_FIELD", "paper_ids": [pid] + neighbor_ids, "score": score,
+                    "name": _name_of(pid)
+                })
+                print(f"🚀 Far-Field papers: {_name_of(pid)[:40]} (+{len(neighbor_ids)} neighbors, score {score:.2f})")
+
+        # Fill remaining slots with next-best unused papers
+        while len(selected_references) < num_outputs:
+            existing = {p for r in selected_references for p in r.get("paper_ids", [])}
+            residue = [(pid, s) for pid, s in scored if pid not in existing]
+            if not residue:
+                break
+            pid, s = residue[0]
+            selected_references.append({
+                "type": "SUPPLEMENTAL", "paper_ids": [pid], "score": s, "name": _name_of(pid)
+            })
+
+        # 3. Build reference context from article texts (no communities / patterns)
+        reference_context_str = ""
+        for idx, ref in enumerate(selected_references):
+            if ref["type"] == "NEAR_FIELD_MISSING":
+                reference_context_str += f"""
+            ### Source {idx + 1} (Near-Field):
+            Condition: Similarity score {ref['score']:.2f} < 0.5.
+            Message: No papers highly relevant to this system were retrieved.
+            """
+                continue
+            paper_blocks = []
+            for pid in ref["paper_ids"]:
+                t = _text_of(pid)
+                if t:
+                    paper_blocks.append(f"- {t[:1200]}")
+            reference_context_str += f"""
+            ### Source {idx + 1} ({ref['type']} - Dist: {1-ref['score']:.2f}): {ref['name']}
+            **Representative papers in this domain:**
+            {chr(10).join(paper_blocks)}
+            """
+
+        prompt = f"""
+        You are a creative System Architect. You are required to design a system based on the user's requirements. Remember that you are facing a designer, so do not use too much technical jargon (like xxx algorithm, engine, neural network, etc.).
+
+        ## Context
+        The user wants to design a system described as: ```{user_query}```.
+        We have already identified the following BASE components (Anchors): ```{base_anchors_str}```.
+
+        ## Task
+        Generate **{num_outputs}** DISTINCT and DIVERGENT extension plans from different function implementation paths to enhance this system.
+        No matter what perspective you adopt, always keep *align with user requirements* as the primary goal. You can achieve this by using different functions or technologies.
+
+        ## Language Policy
+        - Understand the user's input as-is (Chinese or English) without changing its intent.
+        - Keep internal reasoning and retrieval assumptions unchanged.
+        - Final JSON text fields should be primarily in Chinese for user-facing readability.
+        - Proper nouns, model names, protocol names, and indispensable technical terms may remain in English.
+
+        ## Reference Material (Inspiration Only — Not a Template)
+        We have retrieved knowledge from adjacent domains to spark divergent thinking.
+        **Do NOT copy or directly map these references into your plan.** Instead, extract the *underlying mechanism or design principle* and re-express it in the user's specific scenario.
+        Ask yourself: "What functional problem does this reference solve, and how can I solve the analogous problem in the user's context?"
+        If a reference feels irrelevant or forces an unnatural fit, **ignore it** and rely on domain reasoning instead.
+
+        {reference_context_str}
+
+        ## Requirements by Plan
+
+        **Plan 1 (Deep Optimization)**:
+        - Use **Source 1** (Near-Field) as inspiration. Extract the *core design principle* from the referenced papers — do not port technology names or module structures wholesale.
+        - If Source 1 states "No papers highly relevant", focus strictly on the user's own scenario: deeply analyze the Base Anchors and the user's requirements to propose functional enhancements that are a **natural, direct extension** of the existing system.
+        - Prioritize **feasibility and scenario fit** over novelty. All additional_anchors must directly serve the user's stated goal.
+
+        **Plan 2 (Cross-Domain Inspiration)** (If requested):
+        - Use **Source 2** (Far-Field) as your inspiration. Clearly define the core mechanism and advantages of this analogy, and ensure that it significantly differs from other plans.
+        - Focus on **innovative cross-domain transfer**: Instead of just introducing conventional ideas, extract typical processing patterns, novel technologies or main implementation methods from Source 2 that can significantly improve the performance of the system.
+        - Perform **Concept Blending**: specific methods from Source 2 (e.g., "Medical Monitoring") should be metaphorically and innovatively transferred to the User's domain (e.g., "Education Monitoring").
+        - **CRITICAL**: Cross-domain transfer must stay grounded in the user's scenario. The resulting additional_anchors must be recognizable as serving the user's stated goal. Do NOT simply import modules wholesale from Source 2 — they must be adapted, renamed, and functionally redefined in the user's context.
+
+        **Plan 3+** (If requested):
+        - Use **Source 3+** similarly to propose a DISTINCT innovative functional embedding, differing in implementation methods or referenced technologies from previous plans.
+        - Apply the same grounding constraint as Plan 2: all anchors must clearly serve the user's stated scenario.
+
+        ## General Constraint
+        1. When you add new functions, always consider its *feasibility* in the given context.
+        2. **Base Anchors Preservation**:
+           - **CRITICAL**: The existing Base Anchors represent the core of the system. Your divergent plans MUST acknowledge them, build upon them, and seamlessly integrate new functionalities with them across ALL plans.
+        3. **Incremental Only**:
+           - Do NOT output the existing Base Anchors in your array. Output ONLY the KEY and ADDITIONAL innovative components (modules). IF Base Anchors do NOT exist, extract the key components from the user's query and add them.
+           - **CRITICAL**: Do NOT propose modules that are merely synonyms or simple rephrasings of Base Anchors (e.g., if "Tutor" exists, do not add "Instructor Agent"). New anchors must add **distinct and innovative new functionality**.
+           - **LIMIT**: Output at most **5** additional anchors per plan. Prioritize the most impactful and distinctive ones.
+        4. **Specific Anchors**:
+           - Each additional component must have a 'user_term', a 'description', a 'role', and a 'community_id' set to "NONE".
+           - Recheck data flow logic.
+        5. **Cross-Plan Differentiation (CRITICAL)**:
+           - The `perspective` phrases of all plans must be meaningfully different — they must highlight distinct functional innovations, not just rephrase the same concept.
+           - No two plans may propose functionally equivalent additional anchors.
+
+        ### Role Taxonomy
+        {TAXONOMY}\n\n
+
+        ## Naming and Description Rules for Anchors
+        - **user_term**: Must be scenario-specific — include concrete nouns from the user's domain (e.g., if the system is about "采摘机器人", use "采摘任务分配" not "任务分配", "果实识别" not "目标识别"). Short (2–8 chars), action or object oriented.
+        - **description**: Must explicitly state (1) what data/input this module receives, (2) what it does to that data, and (3) what output it produces. Example format: "接收[输入]，通过[处理方式]，输出[输出结果]". Avoid abstract summaries like "进行智能决策" — say exactly WHAT decision, based on WHAT input.
+
+        ## Output Structure (JSON)
+        {{
+            "plans": [
+                {{
+                    "perspective": "use one short phrase to describe the perspective, highlighting the key functions or biggest advantages and innovations of this design (e.g., 'Immersive interactive feedback'). Do not just copy the perspective title or vague terms like 'cross-domain'",
+                    "rationale": "Explain explicitly: 'Inspired by [Source Name: **Feature**], we introduced [Function] to achieve [Goal]...' Ground it in the user's specific scenario.",
+                    "additional_anchors": [
+                        {{
+                            "user_term": "Scenario-specific module name (e.g., '果实成熟度识别' not '目标识别')",
+                            "description": "接收[具体输入]，通过[具体处理]，输出[具体结果]",
+                            "role": "category: subcategory",
+                            "community_id": "NONE"
+                        }}
+                    ]
+                }},
+                ...
+            ]
+        }}
+        """
+        print(f"\n🧠 Generating {num_outputs} divergent plans (mode={self.retrieval_mode}, article routing)...")
+        import time
+        last_err = None
+        for _attempt in range(3):
+            try:
+                response = self.client.chat.completions.create(
+                    model=CHAT_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.9,
+                    response_format={"type": "json_object"},
+                ).choices[0].message.content
+                result = json.loads(response)
+                plans = result.get("plans", [])
+                for plan in plans:
+                    anchors = plan.get("additional_anchors", [])
+                    if len(anchors) > 5:
+                        print(f"⚠️ Trimming additional_anchors from {len(anchors)} to 4")
+                        plan["additional_anchors"] = anchors[:4]
+                    # Non-graph conditions never carry a community route
+                    for a in plan.get("additional_anchors", []):
+                        a["community_id"] = None
+                if len(plans) < num_outputs:
+                    print(f"⚠️ Warning: LLM generated {len(plans)} plans, requested {num_outputs}.")
+                return plans[:num_outputs]
+            except Exception as e:
+                last_err = e
+                print(f"❌ Error in article-routed planning (attempt {_attempt+1}): {e}")
+                if _attempt < 2:
+                    time.sleep(3 * (_attempt + 1))
+        return []
+
         
         
         
 class RetrieverAgent:
-    def __init__(self, vector_store, graph_store, client):
+    def __init__(self, vector_store, graph_store, client, retrieval_mode="kg"):
         self.vector_store = vector_store
         self.graph_store = graph_store
         self.client = client
+        self.retrieval_mode = retrieval_mode
+
+    def _rag_retrieve_as_nodes(self, query_text, top_k):
+        """Vector-RAG retrieval wrapped as NodeWithScore objects so downstream
+        pipeline (IntegratorAgent, EditorAgent) format stays identical to KG mode.
+        Topology metadata is empty in RAG mode (no graph available)."""
+        from retriever_rag import rag_retrieve
+        chunks = rag_retrieve(query_text, top_k=top_k)
+        result = []
+        for i, c in enumerate(chunks):
+            text = c.get("text", "")
+            title = c.get("title", "") or c.get("source", "unknown")
+            node_id = hashlib.md5(
+                f"rag_{c.get('source','')}_{c.get('section','')}_{text[:60]}".encode()
+            ).hexdigest()
+            node = TextNode(text=text, id_=node_id)
+            node.metadata = {
+                "name": title,
+                "source": c.get("source", "unknown"),
+                "type": "ARTICLE",
+                "section": c.get("section", ""),
+                "abstract": c.get("abstract", ""),
+                "topology": {"upstream": [], "downstream": [], "dependencies": []},
+            }
+            result.append(NodeWithScore(node=node, score=c.get("score", 0.0)))
+        return result
+
+    def _flat_retrieve_as_nodes(self, query_text, top_k):
+        """Structure-ablated flat retrieval wrapped as NodeWithScore objects.
+        Same LLM-extracted module texts as KG mode, but pure vector similarity —
+        no community routing, no role filter, no topology (metadata stays empty)."""
+        from retriever_flat import flat_retrieve_modules
+        chunks = flat_retrieve_modules(query_text, top_k=top_k)
+        result = []
+        for c in chunks:
+            node = TextNode(text=c.get("text", ""), id_=c.get("node_id", ""))
+            node.metadata = {
+                "name": c.get("name", ""),
+                "source": c.get("source", "unknown"),
+                "role": c.get("role", ""),
+                "type": "MODULE",
+                "topology": {"upstream": [], "downstream": [], "dependencies": []},
+            }
+            result.append(NodeWithScore(node=node, score=c.get("score", 0.0)))
+        return result
 
     def retrieve_for_module(self, anchors_list, top_k=3, include_topology=True):
         anchor_mapping = {}
-        
+
         def fetch_single_anchor(anchor):
             user_term = anchor["user_term"]
             description = anchor["description"]
             role = anchor.get("role", None)
             community_id = anchor.get("community_id", None)
-            
+
             query_text = f"{user_term}: {description}"
-            
-            retrieved_nodes = retrieve_and_get_content(
-                query_text, 
-                self.vector_store, 
-                self.graph_store, 
-                top_k,
-                node_type="MODULE",
-                role_filter=role,
-                community_id=community_id,
-                include_topology=include_topology
-            )
+
+            if self.retrieval_mode == "rag":
+                retrieved_nodes = self._rag_retrieve_as_nodes(query_text, top_k)
+            elif self.retrieval_mode == "flat":
+                retrieved_nodes = self._flat_retrieve_as_nodes(query_text, top_k)
+            else:
+                retrieved_nodes = retrieve_and_get_content(
+                    query_text,
+                    self.vector_store,
+                    self.graph_store,
+                    top_k,
+                    node_type="MODULE",
+                    role_filter=role,
+                    community_id=community_id,
+                    include_topology=include_topology
+                )
             return user_term, retrieved_nodes
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(anchors_list) or 1)) as executor:
@@ -608,14 +903,20 @@ class RetrieverAgent:
                         anchor_mapping[user_term] = retrieved_nodes
                         for n in retrieved_nodes:
                             print(f"Found: {n.node.metadata.get('name', '')} (Score: {n.score:.4f})")
+                            print(f"  text: {(n.node.text or '')[:100]!r}")
                 except Exception as exc:
                     print(f"Retrieval generated an exception: {exc}")
 
         return anchor_mapping
     
     def retrieve_structure_paths(self, user_relations):
+        # Vector-RAG / flat modes have no graph topology — skip path retrieval entirely.
+        if self.retrieval_mode in ("rag", "flat"):
+            if user_relations:
+                print(f"[{self.retrieval_mode.upper()}] Skipping structural path retrieval (no graph available).")
+            return []
         structural_hints = []
-        
+
         def fetch_single_path(rel):
             src = rel["source"]
             tgt = rel["target"]

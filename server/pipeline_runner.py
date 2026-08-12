@@ -16,12 +16,23 @@ from agents import (
     get_client,
 )
 from retriever_neo4j import get_global_stores
+from retriever_rag import get_rag_store
 from session_manager import create_initial_plan, create_modified_plan, get_session_tree, get_plan_lineage
 
-def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, divergence=True, session_id=None):
-    vector_store, graph_store = get_global_stores()
-    planner = PlannerAgent(get_client(), graph_store)
-    retriever = RetrieverAgent(vector_store, graph_store, get_client())
+def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, divergence=True, session_id=None, retrieval_mode="kg"):
+    if retrieval_mode == "rag":
+        # Vector-RAG mode: no Neo4j needed — load RAG store, pass None stores.
+        get_rag_store()
+        vector_store, graph_store = None, None
+    elif retrieval_mode == "flat":
+        # Structure-ablated mode: no Neo4j needed — local flat store only.
+        from retriever_flat import get_flat_store
+        get_flat_store()
+        vector_store, graph_store = None, None
+    else:
+        vector_store, graph_store = get_global_stores()
+    planner = PlannerAgent(get_client(), graph_store, retrieval_mode=retrieval_mode)
+    retriever = RetrieverAgent(vector_store, graph_store, get_client(), retrieval_mode=retrieval_mode)
     integrator = IntegratorAgent(get_client())
     solver = ConflictSolver() # Initialize Solver
     
@@ -254,7 +265,7 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
             except Exception as e:
                 print(f"❌ Failed to save plan to Session Tree: {e}")
                 plan_id = "error_saving_db"
-                
+
             plan_data = {
                 "plan_id": plan_id,
                 "option_id": i + 1,
@@ -266,6 +277,18 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
                 "explorable_references": explorable_ref
             }
             yield json.dumps({"type": "plan", "plan_data": plan_data}) + "\n"
+            # Emit the full reference pool (R_p) used to generate this plan, for
+            # offline faithfulness evaluation. Separate message type so the
+            # frontend ignores it. current_ref_info values are plain dicts
+            # ({id, text, score, structural_path, metadata}) — directly serialisable.
+            yield json.dumps({
+                "type": "plan_references",
+                "plan_id": plan_id,
+                "option_id": i + 1,
+                "perspective": perspective,
+                "query": full_query,
+                "references": current_ref_info,
+            }, ensure_ascii=False) + "\n"
             print(f"\n--- Mermaid Code (Option {i+1}) ---\n{mermaid_code}\n")
         else:
             print(f"❌ Failed to generate architecture for option {i+1}")
@@ -273,15 +296,23 @@ def run_pipeline(user_query, base_anchors, user_relations, num_outputs=1, diverg
 
     yield json.dumps({"type": "progress", "message": "所有方案生成完毕！", "percent": 100}) + "\n"
 
-def run_edit_pipeline(plan_id, current_plan_json, user_instruction, original_query, session_id=None, referenced_modules=None):
+def run_edit_pipeline(plan_id, current_plan_json, user_instruction, original_query, session_id=None, referenced_modules=None, retrieval_mode="kg"):
     # Initialize agents
     integrator = IntegratorAgent(get_client())
     solver = ConflictSolver()
     editor = EditorAgent(get_client())
 
     # Initialize retriever for tool use
-    vector_store, graph_store = get_global_stores()
-    retriever = RetrieverAgent(vector_store, graph_store, get_client())
+    if retrieval_mode == "rag":
+        get_rag_store()
+        vector_store, graph_store = None, None
+    elif retrieval_mode == "flat":
+        from retriever_flat import get_flat_store
+        get_flat_store()
+        vector_store, graph_store = None, None
+    else:
+        vector_store, graph_store = get_global_stores()
+    retriever = RetrieverAgent(vector_store, graph_store, get_client(), retrieval_mode=retrieval_mode)
 
     if plan_id:
         print(f"User requested modification on parent node: {plan_id}")
@@ -442,4 +473,4 @@ def run_edit_pipeline(plan_id, current_plan_json, user_instruction, original_que
 if __name__ == "__main__":
     query = "design a system for coding education towards children"
     # Example usage
-    run_pipeline(query, base_anchors=[], user_relations=[], num_outputs=1)
+    run_pipeline(query, base_anchors=[], user_relations=[], num_outputs=3, retrieval_mode="rag")
