@@ -13,6 +13,6 @@ export default [
   },
   {
     title: '开发协作 / Dev',
-    pills: ['Claude Code', 'TRAE', 'Git'],
+    pills: ['Claude Code', 'ZCode', 'Git'],
   },
 ]

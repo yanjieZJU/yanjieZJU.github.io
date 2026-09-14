@@ -222,6 +222,23 @@
   margin-bottom: 16px;
 }
 
+.proj-body ol ol {
+  list-style-type: lower-alpha;
+}
+
+.proj-body ol ol ol {
+  list-style-type: lower-roman;
+}
+
+.proj-body ul ul,
+.proj-body ol ul {
+  list-style-type: circle;
+}
+
+.proj-body ul ul ul {
+  list-style-type: square;
+}
+
 .proj-body li {
   margin-bottom: 6px;
   color: var(--color-text-secondary);

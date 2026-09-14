@@ -50,6 +50,10 @@
   color: var(--color-accent);
 }
 
+.navbar-links a.active {
+  color: var(--color-accent);
+}
+
 @media (max-width: 600px) {
   .navbar { padding: 0 20px; }
   .navbar-links { gap: 16px; }

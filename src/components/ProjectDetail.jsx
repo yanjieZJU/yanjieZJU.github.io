@@ -8,8 +8,20 @@ import rehypeRaw from 'rehype-raw'
 import 'katex/dist/katex.min.css'
 import './ProjectDetail.css'
 
-const mdFiles = import.meta.glob('../../content/projects/*.md', { query: '?raw', import: 'default', eager: true })
-const chartModules = import.meta.glob('../../content/projects/*-charts.jsx', { eager: true })
+const contentSources = {
+  projects: {
+    mdFiles: import.meta.glob('../../content/projects/*.md', { query: '?raw', import: 'default', eager: true }),
+    chartModules: import.meta.glob('../../content/projects/*-charts.jsx', { eager: true }),
+    basePath: '/works',
+    backLabel: 'Works',
+  },
+  blog: {
+    mdFiles: import.meta.glob('../../content/blog/*.md', { query: '?raw', import: 'default', eager: true }),
+    chartModules: {},
+    basePath: '/blog',
+    backLabel: 'Blog',
+  },
+}
 
 function parseFrontmatter(raw) {
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)
@@ -32,7 +44,7 @@ function parseFrontmatter(raw) {
   return { data, content }
 }
 
-function getCharts(slug) {
+function getCharts(chartModules, slug) {
   const key = Object.keys(chartModules).find(k => k.includes(`/${slug}-charts.`))
   return key ? chartModules[key] : null
 }
@@ -78,7 +90,7 @@ function TableOfContents({ headings }) {
   )
 }
 
-function findProject(slug) {
+function findPost(mdFiles, slug) {
   for (const [path, raw] of Object.entries(mdFiles)) {
     const fileSlug = path.replace(/.*\/(.+)\.md$/, '$1')
     if (fileSlug === slug) {
@@ -89,18 +101,19 @@ function findProject(slug) {
   return null
 }
 
-export default function ProjectDetail() {
+export default function ProjectDetail({ source = 'projects' }) {
   const { slug } = useParams()
-  const project = useMemo(() => findProject(slug), [slug])
-  const charts = useMemo(() => getCharts(slug), [slug])
+  const { mdFiles, chartModules, basePath, backLabel } = contentSources[source] ?? contentSources.projects
+  const post = useMemo(() => findPost(mdFiles, slug), [mdFiles, slug])
+  const charts = useMemo(() => getCharts(chartModules, slug), [chartModules, slug])
 
-  const headings = useMemo(() => project ? extractHeadings(project.content) : [], [project])
+  const headings = useMemo(() => post ? extractHeadings(post.content) : [], [post])
 
-  if (!project) {
+  if (!post) {
     return (
       <div className="proj-not-found">
         <p>Project not found.</p>
-        <Link to="/">← Back to home</Link>
+        <Link to={basePath}>← Back to {backLabel}</Link>
       </div>
     )
   }
@@ -121,46 +134,46 @@ export default function ProjectDetail() {
 
         <div className="proj-detail-inner">
           <nav className="proj-breadcrumb">
-            <Link to="/" state={{ scrollTarget: 'projects' }}>← Works</Link>
+            <Link to={basePath} state={{ from: 'detail' }}>← {backLabel}</Link>
             <span>/</span>
-            <span>{project.title_en}</span>
+            <span>{post.title_en ?? post.title_zh}</span>
           </nav>
 
-          {project.cover && (
-            <img className="proj-cover" src={project.cover} alt={project.title_zh} />
+          {post.cover && (
+            <img className="proj-cover" src={post.cover} alt={post.title_zh} />
           )}
 
-          <h1 className="proj-title-zh">{project.title_zh}</h1>
-          <h2 className="proj-title-en">{project.title_en}</h2>
+          <h1 className="proj-title-zh">{post.title_zh}</h1>
+          {post.title_en && <h2 className="proj-title-en">{post.title_en}</h2>}
 
           <div className="proj-meta">
-            {project.period && <span>📅 {project.period}</span>}
-            {(project.role_zh || project.role_en) && (
-              <span>{project.role_zh} / {project.role_en}</span>
+            {post.period && <span>📅 {post.period}</span>}
+            {(post.role_zh || post.role_en) && (
+              <span>{post.role_zh} / {post.role_en}</span>
             )}
           </div>
 
           <div className="proj-links">
-            {project.github && (
-              <a className="proj-link-btn proj-link-primary" href={project.github} target="_blank" rel="noreferrer">
+            {post.github && (
+              <a className="proj-link-btn proj-link-primary" href={post.github} target="_blank" rel="noreferrer">
                 GitHub
               </a>
             )}
-            {project.paper && (
-              <a className="proj-link-btn" href={project.paper} target="_blank" rel="noreferrer">
+            {post.paper && (
+              <a className="proj-link-btn" href={post.paper} target="_blank" rel="noreferrer">
                 Paper
               </a>
             )}
-            {project.demo && (
-              <a className="proj-link-btn" href={project.demo} target="_blank" rel="noreferrer">
+            {post.demo && (
+              <a className="proj-link-btn" href={post.demo} target="_blank" rel="noreferrer">
                 Demo
               </a>
             )}
           </div>
 
-          {project.tags && (
+          {post.tags && (
             <div className="proj-tags">
-              {project.tags.map((tag) => (
+              {post.tags.map((tag) => (
                 <span key={tag} className="proj-tag">{tag}</span>
               ))}
             </div>
@@ -252,7 +265,7 @@ export default function ProjectDetail() {
                 },
               }}
             >
-              {preprocessCharts(project.content)}
+              {preprocessCharts(post.content)}
             </ReactMarkdown>
           </div>
         </div>

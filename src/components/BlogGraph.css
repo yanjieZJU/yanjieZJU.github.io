@@ -1,0 +1,87 @@
+.blog-graph {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.blog-graph-svg {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg-alt);
+  touch-action: none;
+  user-select: none;
+}
+
+.graph-edge {
+  stroke: var(--color-border);
+  stroke-width: 1;
+}
+
+.graph-edge.active {
+  stroke: var(--color-accent);
+  stroke-width: 1.6;
+}
+
+.graph-edge.dim {
+  stroke-opacity: 0.15;
+}
+
+.graph-node {
+  cursor: pointer;
+}
+
+.graph-node circle {
+  fill: var(--color-bg);
+  stroke: var(--color-border);
+  stroke-width: 1.5;
+  transition: stroke 0.15s;
+}
+
+.graph-node.tag circle {
+  fill: var(--color-tag-bg);
+}
+
+.graph-node:hover circle,
+.graph-node.selected circle {
+  stroke: var(--color-accent);
+  stroke-width: 2.5;
+}
+
+.graph-node.selected circle {
+  fill: #dde7f5;
+}
+
+.graph-node.post circle {
+  fill: var(--color-accent);
+  stroke: none;
+}
+
+.graph-node.dim {
+  opacity: 0.2;
+}
+
+.graph-label {
+  font-family: var(--font-sans);
+  fill: var(--color-text-secondary);
+  pointer-events: none;
+}
+
+.graph-label.tag {
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--color-text);
+}
+
+.graph-label.post {
+  font-size: 11px;
+}
+
+.blog-graph-hint {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  text-align: center;
+  letter-spacing: 0.5px;
+}

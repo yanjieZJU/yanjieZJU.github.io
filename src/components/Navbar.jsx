@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, Link } from 'react-router-dom'
 import './Navbar.css'
 
-const links = [
+const sectionLinks = [
   { label: 'About', targetId: 'top' },
   { label: 'Education', targetId: 'education' },
-  { label: 'Works', targetId: 'projects' },
+]
+
+const routeLinks = [
+  { label: 'Works', path: '/works' },
+  { label: 'Blog', path: '/blog' },
   { label: 'Skills', targetId: 'skills' },
 ]
 
@@ -39,7 +43,7 @@ export default function Navbar() {
     }
   }, [location.pathname, location.state, navigate])
 
-  const handleNavigate = (targetId) => (event) => {
+  const handleSectionNavigate = (targetId) => (event) => {
     event.preventDefault()
     if (location.pathname === '/') {
       scrollToSection(targetId)
@@ -48,15 +52,28 @@ export default function Navbar() {
     navigate('/', { state: { scrollTarget: targetId } })
   }
 
+  const isRouteActive = (path) => location.pathname === path || location.pathname.startsWith(`${path}/`)
+
   return (
-    <nav className={`navbar${scrolled ? ' scrolled' : ''}`}>
-      <a className="navbar-logo" href="/" onClick={handleNavigate('top')}>颜婕 · Yan Jie</a>
+    <nav className={`navbar${scrolled || location.pathname !== '/' ? ' scrolled' : ''}`}>
+      <a className="navbar-logo" href="/" onClick={handleSectionNavigate('top')}>颜婕 · Yan Jie</a>
       <ul className="navbar-links">
-        {links.map(({ label, targetId }) => (
+        {sectionLinks.map(({ label, targetId }) => (
           <li key={targetId}>
-            <a href="/" onClick={handleNavigate(targetId)}>{label}</a>
+            <a href="/" onClick={handleSectionNavigate(targetId)}>{label}</a>
           </li>
         ))}
+        {routeLinks.map(({ label, ...rest }) =>
+          rest.path ? (
+            <li key={rest.path}>
+              <Link to={rest.path} className={isRouteActive(rest.path) ? 'active' : ''}>{label}</Link>
+            </li>
+          ) : (
+            <li key={rest.targetId}>
+              <a href="/" onClick={handleSectionNavigate(rest.targetId)}>{label}</a>
+            </li>
+          )
+        )}
       </ul>
     </nav>
   )
