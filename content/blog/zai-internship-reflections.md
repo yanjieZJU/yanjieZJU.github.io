@@ -1,7 +1,8 @@
 ---
 title_zh: "智谱实习复盘"
 period: "2026.09"
-tags: ["Skill", "Agent", "实习复盘"]
+tags: ["Skill", "Agent"]
+category: 实习复盘
 cover: ""
 order: 0
 ---

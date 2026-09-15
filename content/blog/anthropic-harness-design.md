@@ -1,7 +1,8 @@
 ---
 title_zh: "长期任务的 Harness 设计：GAN 启发的多智能体架构"
 period: "2026.05"
-tags: ["Anthropic", "Harness", "Agent", "学习笔记"]
+tags: ["Anthropic", "Harness", "Agent"]
+category: [学习笔记/AI 知识/Harness, 学习笔记/AI 知识/Agent]
 cover: ""
 order: 0
 ---

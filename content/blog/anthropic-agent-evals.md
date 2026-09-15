@@ -1,7 +1,8 @@
 ---
 title_zh: "Agent 评测指南：从核心概念到实战路线图"
 period: "2026.04"
-tags: ["Anthropic", "评测", "Agent", "学习笔记"]
+tags: ["Anthropic", "评测", "Agent"]
+category: [学习笔记/AI 知识/评测, 学习笔记/AI 知识/Agent]
 cover: ""
 order: 0
 ---

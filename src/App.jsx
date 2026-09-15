@@ -7,7 +7,6 @@ import Footer from './components/Footer'
 import ProjectDetail from './components/ProjectDetail'
 import ListPage from './components/ListPage'
 import HomeSection from './components/HomeSection'
-import blogTaxonomy from '../content/blog-taxonomy'
 import './App.css'
 
 const projectFiles = import.meta.glob('../content/projects/*.md', { query: '?raw', import: 'default', eager: true })
@@ -56,7 +55,7 @@ export default function App() {
             <ListPage files={projectFiles} basePath="/works" heading="Selected Works" />
           } />
           <Route path="/blog" element={
-            <ListPage files={blogFiles} basePath="/blog" heading="blog" description="学习笔记与日常记录 / Notes & Diary" taxonomy={blogTaxonomy} />
+            <ListPage files={blogFiles} basePath="/blog" heading="blog" description="学习笔记与日常记录 / Notes & Diary" categorize />
           } />
           <Route path="/projects/:slug" element={<ProjectDetail source="projects" />} />
           <Route path="/works/:slug" element={<ProjectDetail source="projects" />} />

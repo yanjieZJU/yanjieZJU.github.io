@@ -1,7 +1,8 @@
 ---
 title_zh: "Managed Agents 学习笔记"
 period: "2026.04"
-tags: ["Anthropic", "Agent", "学习笔记"]
+tags: ["Anthropic", "Agent"]
+category: 学习笔记/AI 知识/Agent
 cover: ""
 order: 0
 ---

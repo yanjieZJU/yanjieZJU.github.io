@@ -12,19 +12,29 @@
   margin: -24px 0 32px;
 }
 
-/* 分类树下方的筛选状态栏 */
-.taxonomy-status {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  font-family: var(--font-sans);
-  font-size: 12px;
-  color: var(--color-text-secondary);
+/* 启用分类树时，标题/描述/导图收紧为一个整体 */
+.list-page-categorized .section-heading {
   margin-bottom: 24px;
 }
 
+.list-page-categorized .list-page-desc {
+  margin-bottom: 20px;
+}
+
+/* 导图与卡片列表之间的页眉：细线夹路径与篇数 */
+.taxonomy-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin-bottom: 28px;
+}
+
 .taxonomy-status-path {
+  font-family: var(--font-serif);
+  font-size: 13px;
   color: var(--color-accent);
 }
 

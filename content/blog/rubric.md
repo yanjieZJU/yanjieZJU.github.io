@@ -1,7 +1,8 @@
 ---
 title_zh: "Rubric 评测标准构建方法"
 period: "2026.06"
-tags: ["Rubric", "评测", "学习笔记"]
+tags: ["Rubric", "评测"]
+category: 学习笔记/AI 知识/评测
 cover: ""
 order: 1
 ---
