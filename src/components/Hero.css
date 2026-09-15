@@ -124,6 +124,70 @@
   color: white;
 }
 
+.hero-link-wechat {
+  position: relative;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+
+.wechat-popover {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  width: 148px;
+  padding: 10px 10px 8px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(26, 26, 26, 0.12);
+  text-align: center;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(4px);
+  transition: opacity 0.2s, transform 0.2s, visibility 0.2s;
+  z-index: 20;
+}
+
+.wechat-popover::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  background: var(--color-bg);
+  border-right: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.wechat-popover img {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: 2px;
+}
+
+.wechat-popover-label {
+  display: block;
+  margin-top: 6px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.hero-link-wechat:hover .wechat-popover,
+.hero-link-wechat:focus .wechat-popover,
+.hero-link-wechat.is-open .wechat-popover {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+
 @media (max-width: 700px) {
   .hero-inner {
     flex-direction: column;

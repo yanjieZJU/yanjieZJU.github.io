@@ -1,31 +1,24 @@
 import { useMemo, useRef, useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import CardGrid from './CardGrid'
-import BlogGraph from './BlogGraph'
+import TaxonomyTree from './TaxonomyTree'
 import useScrollAnimation from '../hooks/useScrollAnimation'
 import { loadPosts } from '../lib/posts'
 import './ListPage.css'
 
-export default function ListPage({ files, basePath, heading, description, enableGraph = false, enableFilter = false }) {
+export default function ListPage({ files, basePath, heading, description, taxonomy = null }) {
   const titleRef = useScrollAnimation()
   const listRef = useRef(null)
   const { search } = useLocation()
   const fromDetail = useMemo(() => new URLSearchParams(search).get('from') === 'detail', [search])
-  const [view, setView] = useState('list')
-  const [activeTags, setActiveTags] = useState([])
+  const [selected, setSelected] = useState(null)
 
-  const posts = useMemo(() => (enableFilter ? loadPosts(files, { sortByDate: true }) : []), [files, enableFilter])
-  const allTags = useMemo(() => {
-    if (!enableFilter) return []
-    const counts = new Map()
-    posts.forEach(p => (p.tags ?? []).forEach(t => counts.set(t, (counts.get(t) ?? 0) + 1)))
-    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-  }, [posts, enableFilter])
+  const posts = useMemo(() => (taxonomy ? loadPosts(files, { sortByDate: true }) : []), [files, taxonomy])
 
   const filteredPosts = useMemo(() => {
-    if (activeTags.length === 0) return posts
-    return posts.filter(p => activeTags.every(t => (p.tags ?? []).includes(t)))
-  }, [posts, activeTags])
+    if (!selected) return posts
+    return posts.filter(p => selected.slugs?.has(p.slug) || selected.tags.some(t => (p.tags ?? []).includes(t)))
+  }, [posts, selected])
 
   useEffect(() => {
     if (fromDetail && listRef.current) {
@@ -33,61 +26,46 @@ export default function ListPage({ files, basePath, heading, description, enable
     }
   }, [fromDetail])
 
-  const toggleTag = (tag) => {
-    setActiveTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag])
-  }
-
   return (
     <section id={basePath.slice(1)} className="list-page">
       <div className="section">
         <h2 className="section-heading fade-up" ref={titleRef}>{heading}</h2>
         {description && <p className="list-page-desc fade-up">{description}</p>}
-        {enableGraph && (
-          <div className="list-view-toggle" role="tablist">
-            <button
-              role="tab"
-              aria-selected={view === 'list'}
-              className={view === 'list' ? 'active' : ''}
-              onClick={() => setView('list')}
-            >
-              列表
-            </button>
-            <button
-              role="tab"
-              aria-selected={view === 'graph'}
-              className={view === 'graph' ? 'active' : ''}
-              onClick={() => setView('graph')}
-            >
-              图谱
-            </button>
-          </div>
+        {taxonomy && (
+          <>
+            <TaxonomyTree
+              taxonomy={taxonomy}
+              posts={posts}
+              selectedId={selected ? selected.id : null}
+              onSelect={setSelected}
+            />
+            <div className="taxonomy-status" ref={listRef}>
+              {selected ? (
+                <>
+                  <span className="taxonomy-status-path">{selected.path.join(' / ')}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>{filteredPosts.length} 篇</span>
+                  <button type="button" className="taxonomy-status-clear" onClick={() => setSelected(null)}>
+                    清除筛选
+                  </button>
+                </>
+              ) : (
+                <span>共 {posts.length} 篇</span>
+              )}
+            </div>
+          </>
         )}
-        {enableFilter && view === 'list' && (
-          <div className="tag-filter">
-            {allTags.map(([tag, count]) => (
-              <button
-                key={tag}
-                className={`tag-filter-btn${activeTags.includes(tag) ? ' active' : ''}`}
-                onClick={() => toggleTag(tag)}
-              >
-                {tag} <span className="tag-filter-count">{count}</span>
-              </button>
-            ))}
-            {activeTags.length > 0 && (
-              <button className="tag-filter-clear" onClick={() => setActiveTags([])}>
-                清除筛选
-              </button>
-            )}
-          </div>
+        {!taxonomy && <div ref={listRef} />}
+        {selected && filteredPosts.length === 0 && (
+          <p className="taxonomy-empty">该分类下暂无文章</p>
         )}
-        <div ref={listRef} />
-        {enableGraph && view === 'graph' ? (
-          <BlogGraph files={files} basePath={basePath} />
-        ) : enableFilter ? (
-          <CardGrid files={files} basePath={basePath} linkLabel={basePath === '/blog' ? 'View Post →' : 'View Project →'} sortByDate posts={filteredPosts} />
-        ) : (
-          <CardGrid files={files} basePath={basePath} linkLabel={basePath === '/blog' ? 'View Post →' : 'View Project →'} />
-        )}
+        <CardGrid
+          files={files}
+          basePath={basePath}
+          linkLabel={basePath === '/blog' ? 'View Post →' : 'View Project →'}
+          sortByDate={!!taxonomy}
+          posts={taxonomy ? filteredPosts : undefined}
+        />
       </div>
     </section>
   )

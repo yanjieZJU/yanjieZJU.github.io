@@ -1,7 +1,7 @@
 ---
 title_zh: "ArchCanvas：系统设计架构图智能助手"
 title_en: "ArchCanvas: AI-Driven System Architecture Diagram Assistant"
-period: "2024.12 — 至今（在投）"
+period: "2025.12 — 至今（在投）"
 role_zh: "项目负责人"
 role_en: "Project Lead"
 tags: ["LLM", "AI Agent", "Knowledge Graph", "React", "Architecture Diagram"]

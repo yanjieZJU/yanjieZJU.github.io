@@ -1,0 +1,199 @@
+.taxonomy-tree {
+  margin-bottom: 20px;
+}
+
+/* 根节点（全部）pill */
+.taxonomy-root-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  padding: 5px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.taxonomy-root-btn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.taxonomy-root-btn.active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+
+.taxonomy-root-btn.active .tree-count {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.tree-root,
+.tree-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tree-root {
+  margin-top: 10px;
+}
+
+.tree-item {
+  position: relative;
+  padding: 2px 0;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+}
+
+/* 子树缩进与连接线 */
+.tree-children {
+  position: relative;
+  padding-left: 30px;
+}
+
+/* 竖向主干线 */
+.tree-children::before {
+  content: '';
+  position: absolute;
+  left: 19px;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--color-border);
+}
+
+/* 横向肘形连接线（指向每个子节点） */
+.tree-children > .tree-item::before {
+  content: '';
+  position: absolute;
+  left: -11px;
+  top: 14px;
+  width: 11px;
+  border-top: 1px solid var(--color-border);
+}
+
+/* 遮住最后一个子节点以下的主干线 */
+.tree-children > .tree-item:last-child::after {
+  content: '';
+  position: absolute;
+  left: -12px;
+  width: 3px;
+  top: 14px;
+  bottom: -1px;
+  background: var(--color-bg);
+}
+
+/* 分支折叠按钮 */
+.tree-twisty {
+  flex: 0 0 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.tree-twisty:hover {
+  color: var(--color-accent);
+}
+
+.tree-twisty svg {
+  transform: rotate(90deg);
+  transition: transform 0.15s;
+}
+
+.tree-item.collapsed .tree-twisty svg {
+  transform: rotate(0deg);
+}
+
+/* 叶子节点圆点 */
+.tree-leaf-dot {
+  flex: 0 0 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tree-leaf-dot::after {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-border);
+}
+
+.tree-item:has(> .tree-row .tree-label.selected) .tree-leaf-dot::after {
+  background: var(--color-accent);
+}
+
+/* 节点标签 */
+.tree-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  padding: 3px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.tree-label:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.tree-label.selected {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+
+/* 选中深层的叶子时，其祖先分支高亮 */
+.tree-item.ancestor > .tree-row .tree-label {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.tree-count {
+  font-size: 10px;
+  opacity: 0.65;
+}
+
+.tree-label.selected .tree-count {
+  opacity: 0.8;
+}
+
+@media (max-width: 700px) {
+  .tree-children {
+    padding-left: 22px;
+  }
+  .tree-children::before {
+    left: 15px;
+  }
+  .tree-children > .tree-item::before {
+    left: -9px;
+    width: 9px;
+  }
+  .tree-children > .tree-item:last-child::after {
+    left: -10px;
+  }
+}

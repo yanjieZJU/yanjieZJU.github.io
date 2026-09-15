@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import useScrollAnimation from '../hooks/useScrollAnimation'
 import avatar from '../assets/avatar.png'
+import qrcode from '../assets/qrcode.jpg'
 import profile from '../../content/profile.js'
 import './Hero.css'
 
@@ -23,8 +25,15 @@ const IconScholar = () => (
   </svg>
 )
 
+const IconWeChat = () => (
+  <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18" aria-hidden="true">
+    <path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 0 0 .167-.054l1.903-1.114a.864.864 0 0 1 .717-.098 10.16 10.16 0 0 0 2.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.431-1.185 3.319-1.698 5.145-1.528-.459-3.61-4.146-6.308-8.378-6.308zM6.133 6.17a1.43 1.43 0 1 1 0 2.864 1.43 1.43 0 0 1 0-2.864zm5.209 0a1.43 1.43 0 1 1 0 2.864 1.43 1.43 0 0 1 0-2.864zm5.19 3.466c-2.815 0-5.343 1.797-5.343 4.213 0 2.354 2.494 4.21 5.343 4.21a7.61 7.61 0 0 0 2.115-.298.796.796 0 0 1 .65.086l1.419.832a.284.284 0 0 0 .15.046.252.252 0 0 0 .252-.254c0-.06-.024-.124-.04-.185l-.293-1.113a.524.524 0 0 1 .19-.585c1.398-1.073 2.224-2.543 2.224-4.138 0-2.416-2.527-4.213-5.343-4.213zm-1.966 2.2a1.223 1.223 0 1 1 0 2.446 1.223 1.223 0 0 1 0-2.446zm3.844 0a1.223 1.223 0 1 1 0 2.446 1.223 1.223 0 0 1 0-2.446z"/>
+  </svg>
+)
+
 export default function Hero() {
   const ref = useScrollAnimation(0.1)
+  const [wechatOpen, setWechatOpen] = useState(false)
 
   return (
     <section className="hero" id="top">
@@ -48,6 +57,21 @@ export default function Hero() {
                 <IconGitHub />
               </a>
             )}
+            <button
+              type="button"
+              className={`hero-link hero-link-icon hero-link-wechat${wechatOpen ? ' is-open' : ''}`}
+              title="微信 WeChat"
+              aria-label="微信 WeChat"
+              aria-expanded={wechatOpen}
+              onClick={() => setWechatOpen(v => !v)}
+              onBlur={() => setWechatOpen(false)}
+            >
+              <IconWeChat />
+              <span className="wechat-popover">
+                <img src={qrcode} alt="微信二维码 WeChat QR code" />
+                <span className="wechat-popover-label">微信 · WeChat</span>
+              </span>
+            </button>
             {profile.scholar && (
               <a href={profile.scholar} className="hero-link hero-link-icon" target="_blank" rel="noreferrer" title="Google Scholar" aria-label="Google Scholar">
                 <IconScholar />

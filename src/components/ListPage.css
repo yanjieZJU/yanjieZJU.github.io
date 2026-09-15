@@ -12,84 +12,41 @@
   margin: -24px 0 32px;
 }
 
-.list-view-toggle {
-  display: inline-flex;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  overflow: hidden;
-  margin-bottom: 24px;
-}
-
-.list-view-toggle button {
-  font-family: var(--font-sans);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 1px;
-  padding: 6px 16px;
-  border: none;
-  background: var(--color-bg);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.list-view-toggle button.active {
-  background: var(--color-accent);
-  color: #fff;
-}
-
-.tag-filter {
+/* 分类树下方的筛选状态栏 */
+.taxonomy-status {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--color-text-secondary);
   margin-bottom: 24px;
 }
 
-.tag-filter-btn {
-  font-family: var(--font-sans);
-  font-size: 11px;
-  padding: 4px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  background: var(--color-bg);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.tag-filter-btn:hover {
-  border-color: var(--color-accent);
+.taxonomy-status-path {
   color: var(--color-accent);
 }
 
-.tag-filter-btn.active {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
-  color: #fff;
-}
-
-.tag-filter-btn.active .tag-filter-count {
-  color: rgba(255, 255, 255, 0.8);
-}
-
-.tag-filter-count {
-  font-size: 10px;
-  opacity: 0.7;
-  margin-left: 2px;
-}
-
-.tag-filter-clear {
-  font-family: var(--font-sans);
-  font-size: 11px;
-  padding: 4px 12px;
+.taxonomy-status-clear {
   border: none;
-  border-radius: 999px;
   background: none;
+  padding: 0;
+  font-family: var(--font-sans);
+  font-size: 12px;
   color: var(--color-text-secondary);
-  cursor: pointer;
   text-decoration: underline;
+  cursor: pointer;
 }
 
-.tag-filter-clear:hover {
+.taxonomy-status-clear:hover {
   color: var(--color-accent);
+}
+
+.taxonomy-empty {
+  font-family: var(--font-serif);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  text-align: center;
+  padding: 40px 0;
 }
