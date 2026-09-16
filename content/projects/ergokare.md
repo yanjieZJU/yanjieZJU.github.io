@@ -1,7 +1,7 @@
 ---
 title_zh: "基于LLM的人体工效学风险预筛助手"
 title_en: "ErgoKARE: A Knowledge-Augmented LLM Method for Video-Based Ergonomic Risk Screening and Recommendation Generation"
-period: "2024.10 — 2025.11 | IDETC（设计学 B 类, 已录用）"
+period: "2024.10 — 2025.11 | IDETC"
 role_zh: "项目负责人"
 role_en: "Project Lead"
 tags: ["LLM", "RAG", "Prompt Engineering", "Ergonomics"]

@@ -12,7 +12,7 @@ export default [
   {
     schoolZh: '浙江大学 计算机科学与技术学院',
     schoolEn: 'Zhejiang University, College of Computer Science and Technology',
-    degreeZh: '工业设计 · 本科（GPA 3.97/4，Top 10%）',
+    degreeZh: '工业设计 · 本科（GPA 3.97/4）',
     degreeEn: 'B.Eng. in Industrial Design',
     period: '2020.09 — 2024.06',
     descZh: '主修课程：信息交互设计技术、用户体验与产品创新设计、数据结构基础、设计心理学',

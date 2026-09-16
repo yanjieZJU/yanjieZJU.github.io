@@ -216,6 +216,16 @@
   color: var(--color-text-secondary);
 }
 
+.proj-body a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.proj-body a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .proj-body ul,
 .proj-body ol {
   padding-left: 24px;
