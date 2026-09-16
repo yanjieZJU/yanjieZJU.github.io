@@ -54,7 +54,7 @@ export default function ListPage({ files, basePath, heading, description, catego
           </>
         )}
         {!categorize && <div ref={listRef} />}
-        {selected && filteredPosts.length === 0 && (
+        {categorize && selected && filteredPosts.length === 0 && (
           <p className="taxonomy-empty">该分类下暂无文章</p>
         )}
         <CardGrid

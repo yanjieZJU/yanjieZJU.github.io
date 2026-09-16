@@ -52,10 +52,10 @@ export default function App() {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/works" element={
-            <ListPage files={projectFiles} basePath="/works" heading="Selected Works" />
+            <ListPage key="works" files={projectFiles} basePath="/works" heading="Selected Works" />
           } />
           <Route path="/blog" element={
-            <ListPage files={blogFiles} basePath="/blog" heading="blog" description="学习笔记与日常记录 / Notes & Diary" categorize />
+            <ListPage key="blog" files={blogFiles} basePath="/blog" heading="blog" description="学习笔记与日常记录 / Notes & Diary" categorize />
           } />
           <Route path="/projects/:slug" element={<ProjectDetail source="projects" />} />
           <Route path="/works/:slug" element={<ProjectDetail source="projects" />} />
