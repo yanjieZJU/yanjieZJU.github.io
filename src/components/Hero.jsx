@@ -48,12 +48,14 @@ export default function Hero() {
           <p className="hero-desc-en">{profile.bioEn}</p>
           <div className="hero-links">
             {profile.email && (
-              <a href={`mailto:${profile.email}`} className="hero-link hero-link-icon" title={profile.email} aria-label="Email">
+              <a href={`mailto:${profile.email}`} className="hero-link hero-link-icon" title={profile.email} aria-label="Email"
+                 data-umami-event="social_click" data-umami-event-network="email">
                 <IconEmail />
               </a>
             )}
             {profile.github && (
-              <a href={profile.github} className="hero-link hero-link-icon" target="_blank" rel="noreferrer" title="GitHub" aria-label="GitHub">
+              <a href={profile.github} className="hero-link hero-link-icon" target="_blank" rel="noreferrer" title="GitHub" aria-label="GitHub"
+                 data-umami-event="social_click" data-umami-event-network="github">
                 <IconGitHub />
               </a>
             )}
@@ -63,6 +65,7 @@ export default function Hero() {
               title="微信 WeChat"
               aria-label="微信 WeChat"
               aria-expanded={wechatOpen}
+              data-umami-event="social_click" data-umami-event-network="wechat"
               onClick={() => setWechatOpen(v => !v)}
               onBlur={() => setWechatOpen(false)}
             >
@@ -73,12 +76,13 @@ export default function Hero() {
               </span>
             </button>
             {profile.scholar && (
-              <a href={profile.scholar} className="hero-link hero-link-icon" target="_blank" rel="noreferrer" title="Google Scholar" aria-label="Google Scholar">
+              <a href={profile.scholar} className="hero-link hero-link-icon" target="_blank" rel="noreferrer" title="Google Scholar" aria-label="Google Scholar"
+                 data-umami-event="social_click" data-umami-event-network="scholar">
                 <IconScholar />
               </a>
             )}
             {profile.cv && (
-              <a href={profile.cv} className="hero-btn" download>↓ CV</a>
+              <a href={profile.cv} className="hero-btn" download data-umami-event="social_click" data-umami-event-network="cv">↓ CV</a>
             )}
           </div>
         </div>

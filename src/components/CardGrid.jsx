@@ -45,7 +45,13 @@ export function Card({ post, delay, basePath, linkLabel }) {
           <span key={tag} className="project-tag">{tag}</span>
         ))}
       </div>
-      <Link className="project-link" to={`${basePath}/${post.slug}`}>
+      <Link
+        className="project-link"
+        to={`${basePath}/${post.slug}`}
+        data-umami-event="card_click"
+        data-umami-event-type={basePath.slice(1)}
+        data-umami-event-slug={post.slug}
+      >
         {linkLabel}
       </Link>
     </div>

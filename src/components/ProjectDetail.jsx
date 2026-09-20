@@ -155,17 +155,20 @@ export default function ProjectDetail({ source = 'projects' }) {
 
           <div className="proj-links">
             {post.github && (
-              <a className="proj-link-btn proj-link-primary" href={post.github} target="_blank" rel="noreferrer">
+              <a className="proj-link-btn proj-link-primary" href={post.github} target="_blank" rel="noreferrer"
+                 data-umami-event="project_link_click" data-umami-event-kind="github" data-umami-event-slug={slug}>
                 GitHub
               </a>
             )}
             {post.paper && (
-              <a className="proj-link-btn" href={post.paper} target="_blank" rel="noreferrer">
+              <a className="proj-link-btn" href={post.paper} target="_blank" rel="noreferrer"
+                 data-umami-event="project_link_click" data-umami-event-kind="paper" data-umami-event-slug={slug}>
                 Paper
               </a>
             )}
             {post.demo && (
-              <a className="proj-link-btn" href={post.demo} target="_blank" rel="noreferrer">
+              <a className="proj-link-btn" href={post.demo} target="_blank" rel="noreferrer"
+                 data-umami-event="project_link_click" data-umami-event-kind="demo" data-umami-event-slug={slug}>
                 Demo
               </a>
             )}
@@ -226,7 +229,7 @@ export default function ProjectDetail({ source = 'projects' }) {
                                       if (/^\d+$/.test(t.trim())) {
                                         return <sup><a href={href} target="_blank" rel="noreferrer" className="proj-ref">{t}</a></sup>
                                       }
-                                      return <a href={href} target="_blank" rel="noreferrer">{c}</a>
+                                      return <a href={href} target="_blank" rel="noreferrer" data-umami-event="outbound_click" data-umami-event-slug={slug}>{c}</a>
                                     }
                                   }}
                                 >
@@ -247,7 +250,7 @@ export default function ProjectDetail({ source = 'projects' }) {
                               if (/^\d+$/.test(t.trim())) {
                                 return <sup><a href={href} target="_blank" rel="noreferrer" className="proj-ref">{t}</a></sup>
                               }
-                              return <a href={href} target="_blank" rel="noreferrer">{c}</a>
+                              return <a href={href} target="_blank" rel="noreferrer" data-umami-event="outbound_click" data-umami-event-slug={slug}>{c}</a>
                             }
                           }}
                         >{raw}</ReactMarkdown>

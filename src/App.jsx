@@ -1,4 +1,6 @@
 import { HashRouter, Routes, Route } from 'react-router-dom'
+import RouteTracker from './components/RouteTracker'
+import { loadPosts } from './lib/posts'
 import Navbar from './components/Navbar'
 import Hero from './components/Hero'
 import Education from './components/Education'
@@ -11,6 +13,16 @@ import './App.css'
 
 const projectFiles = import.meta.glob('../content/projects/*.md', { query: '?raw', import: 'default', eager: true })
 const blogFiles = import.meta.glob('../content/blog/*.md', { query: '?raw', import: 'default', eager: true })
+
+// 路径 → 标题映射：埋点 pageview 的 title + 浏览器标签页标题（含 /projects/:slug 兼容路由）
+const routeTitles = {
+  '/': '首页 Home',
+  '/works': 'Works',
+  '/blog': 'Blog',
+  ...Object.fromEntries(loadPosts(projectFiles).map(p => [`/works/${p.slug}`, p.title_zh])),
+  ...Object.fromEntries(loadPosts(projectFiles).map(p => [`/projects/${p.slug}`, p.title_zh])),
+  ...Object.fromEntries(loadPosts(blogFiles).map(p => [`/blog/${p.slug}`, p.title_zh])),
+}
 
 const HOME_PREVIEW_COUNT = 3
 
@@ -47,6 +59,7 @@ function HomePage() {
 export default function App() {
   return (
     <HashRouter>
+      <RouteTracker titles={routeTitles} />
       <Navbar />
       <main>
         <Routes>
