@@ -52,6 +52,12 @@ try {
     if (isUmamiUrl(req.url()))
       networkLog.push(`FAILED ${req.url()} (${req.failure()?.errorText})`)
   })
+  page.on('response', async res => {
+    if (res.url().includes('/api/send')) {
+      const body = await res.text().catch(() => '')
+      networkLog.push(`RESP ${res.status()} ${res.url().split('/api')[0]}/api/send ${body.slice(0, 120)}`)
+    }
+  })
 
   const evalClick = (selector) =>
     page.evaluate((selector) => {
